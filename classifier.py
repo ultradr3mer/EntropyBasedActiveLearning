@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn import svm
@@ -27,8 +29,19 @@ class Classifier:
     def prediction_prob(self, x_k, y):
         pass
 
-    # def prediction_acc(self, other_unlabeled_x, y):
-    #     pass
+    def copy(self):
+        return copy.deepcopy(self)
+
+    def prediction_acc(self, x, y):
+        m = len(x)
+        pred_y = self.predict_class(x)
+        return sum([1 for predicted, actual in zip(pred_y, y) if predicted == actual]) / m
+
+    def predict_class(self, x):
+        n = 3
+        probabilities = np.reshape(self.predict(x), (self.l, len(x))).T
+        return np.array([np.where(p_i == max(p_i))[0][0] for p_i in probabilities])
+
 
 
 class SvmClassifier(Classifier):
@@ -52,10 +65,6 @@ class SvmClassifier(Classifier):
         if self.normalizer is not None:
             x = self.normalizer.transform(x)
         return self.clf.predict(x)
-
-    # def prediction_acc(self, x, y):
-    #     pred_y = list(self.predict(x))
-    #     return [if_then_else(y == y, 1, 0) for y in pred_y]
 
     def prediction_prob(self, x, y):
         pred_y = self.predict(x)
@@ -81,13 +90,9 @@ class KnnClassifier(Classifier):
     def predict(self, x):
         n = 3
         distances, indices = self.neighbors.kneighbors(x, n)
-        return np.array([sum([1 for i in indices_k if self.y[i] == label]) / n
+        return np.array([sum([max(1 - abs(self.y[i] - label), 0) for i in indices_k]) / n
                          for label in range(self.l)
                          for indices_k in indices])
-
-    # def prediction_acc(self, x, y):
-    #     pred_y = self.predict(x)
-    #     return [if_then_else(round(y) == y, 1, 0) for y in pred_y]
 
     def prediction_prob(self, x, y):
         pred_y = self.predict(x)

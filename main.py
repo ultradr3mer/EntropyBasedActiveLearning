@@ -1,3 +1,5 @@
+import random
+
 from sklearn.datasets import make_blobs
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
@@ -23,6 +25,7 @@ all_x, all_y = make_blobs(n_samples=150,
 y_map = {0: 0, 1: 1, 2: 2, 3: 2, 4: 1}
 all_y = [y_map[y] for y in all_y]
 x_labeled, x_unlabeled, y_labeled, y_unlabeled = train_test_split(all_x, all_y, test_size=0.9, shuffle=True)
+
 
 def plot_dataset(x, y):
     # This function would plot the generated points
@@ -104,17 +107,77 @@ def plot_entropy(entropy):
 
 plot_dataset(all_x, all_y)
 
+
 def index_2d(a, b):
     return np.where(a == b)[0][0]
 
-learner = MinimumEntropyLearner(KnnClassifier(len(np.unique(all_y))), x_labeled, y_labeled, x_unlabeled, np.unique(all_y))
+
+def init_learner():
+    return MinimumEntropyLearner(KnnClassifier(len(np.unique(all_y))), x_labeled, y_labeled, x_unlabeled,
+                                 np.unique(all_y))
 
 
-for i in range(50):
+
+learner = init_learner()
+acc_mee = []
+
+for i in range(30):
     requested_samples = learner.get_next_samples(1)
-    if i % 5 == 0:
-        plot()
+    # if i % 5 == 0:
+    #     plot()
     learner.set_labels(requested_samples, [all_y[np.where(all_x == s)[0][0]] for s in requested_samples])
-    # plot_entropy(learner.calc_entropy())
+    clf = learner.build_classifier()
+    acc = clf.prediction_acc(all_x, all_y)
+    acc_mee.append(acc)
+    print("Prediction accuracy mee", acc)
+    # if i % 5 == 0:
+    #     plot_entropy(learner.calc_entropy())
+
+plot()
+
+learner = init_learner()
+acc_rnd = []
+
+for i in range(30):
+    requested_samples = np.array([random.choice(learner.unlabeled_x)])
+    # if i % 5 == 0:
+    #     plot()
+    learner.set_labels(requested_samples, [all_y[np.where(all_x == s)[0][0]] for s in requested_samples])
+    clf = learner.build_classifier()
+    acc = clf.prediction_acc(all_x, all_y)
+    acc_rnd.append(acc)
+    print("Prediction accuracy random", clf.prediction_acc(all_x, all_y))
+    # if i % 5 == 0:
+    #     plot_entropy(learner.calc_entropy())
+
+plot()
 
 
+def plot_acc():
+    plt.figure()
+
+    plt.plot(
+        range(len(acc_mee)),
+        acc_mee,
+        label="mee",
+        color="b",
+        alpha=1.0
+    )
+
+    plt.plot(
+        range(len(acc_rnd)),
+        acc_rnd,
+        label="rnd",
+        color="r",
+        alpha=1.0
+    )
+
+    plt.title('Data')
+
+    # plt.axis([-25.0, 35.0, -25.0, 40.0])
+    plt.title('Data')
+    plt.legend()
+    plt.show()
+
+
+plot_acc()

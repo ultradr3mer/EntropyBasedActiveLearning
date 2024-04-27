@@ -36,18 +36,20 @@ class MinimumEntropyLearner:
                 prob_base = np.array([base_pred[j * self.m + i],
                                       list(self.y).count(j) / len(self.y),
                                       1 / len(self.labels)])
-                prob_j = np.average(prob_base, weights=[0.8, 0.1, 0.1])
+                prob_j = np.average(prob_base, weights=[0.0, 0.0, 1.0])
                 if not prob_j:
                     continue
-                #
-                # self.classifier.fit(np.concatenate((self.labeled_x, [x_i])), np.concatenate((self.y, [label_j])))
-                # probs_ahead = self.classifier.predict(self.unlabeled_x)
 
                 h_j = calc_entropy(probs[j * self.m + i])
 
                 h_x = h_x + prob_j * h_j
             h.append(float(h_x))
         return np.array(h)
+
+    def build_classifier(self):
+        copy = self.classifier.copy()
+        copy.fit(self.labeled_x, self.y)
+        return copy
 
     def estimate_probs(self):
         b = np.zeros((self.l * self.m, self.l * self.m))
