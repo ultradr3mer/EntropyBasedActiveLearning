@@ -8,15 +8,21 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 import warnings
 
-from classifier import SvmClassifier
+from classifier import SvmClassifier, KnnClassifier
 from minimumEntropyLearner import MinimumEntropyLearner
 
 warnings.filterwarnings('ignore')
 
 # The following lines generate a random set of points in the 2D space. Please refer to make_blobs function in
 # scikit-learn
-x, y = make_blobs(n_samples=100, n_features=2, centers=np.array([[0, 0], [10, 18]]), cluster_std=np.array([9.0, 9.0]))
-x_labeled, x_unlabeled, y_labeled, y_unlabeled = train_test_split(x, y, test_size=0.9, shuffle=True)
+# all_x, all_y = make_blobs(n_samples=150, n_features=2, centers=np.array([[0, 0], [10, 18]]), cluster_std=np.array([7.0, 7.0]))
+all_x, all_y = make_blobs(n_samples=150,
+                          n_features=5,
+                          centers=np.array([[-6, -1], [10, 18], [14, -6], [-12, 18], [-10, -16]]),
+                          cluster_std=np.array([6.0, 9.0, 5.0, 4.0, 4.0]))
+y_map = {0: 0, 1: 1, 2: 2, 3: 2, 4: 1}
+all_y = [y_map[y] for y in all_y]
+x_labeled, x_unlabeled, y_labeled, y_unlabeled = train_test_split(all_x, all_y, test_size=0.9, shuffle=True)
 
 def plot_dataset(x, y):
     # This function would plot the generated points
@@ -53,7 +59,7 @@ def plot():
         label="unlabeled"
     )
 
-    unique_classes = np.unique(y)
+    unique_classes = np.unique(all_y)
     colors = cm.magma(np.linspace(0.0, 1.0), unique_classes.size)
     rainbow = cm.get_cmap('rainbow', 4)
     for this_class in unique_classes:
@@ -74,15 +80,41 @@ def plot():
     plt.legend()
     plt.show()
 
-plot_dataset(x, y)
+
+def plot_entropy(entropy):
+    plt.figure()
+    # unique_classes = np.unique(all_y)
+    # colors = cm.magma(np.linspace(0.0, 1.0), unique_classes.size)
+    # rainbow = cm.get_cmap('rainbow', 4)
+    # color = rainbow(this_class)
+    plt.scatter(
+        learner.unlabeled_x[:, 0],
+        learner.unlabeled_x[:, 1],
+        c=entropy,
+        label="entropy",
+        alpha=1.0
+    )
+    plt.title('Data')
+
+    plt.axis([-25.0, 35.0, -25.0, 40.0])
+    plt.title('Data')
+    plt.legend()
+    plt.show()
+
+
+plot_dataset(all_x, all_y)
 
 def index_2d(a, b):
     return np.where(a == b)[0][0]
 
-learner = MinimumEntropyLearner(SvmClassifier(), x_labeled, y_labeled, x_unlabeled, np.unique(y))
-# entropy = learner.entropy_iterative()
-for i in range(9):
-    requested_samples = learner.get_next_samples(10)
-    plot()
-    learner.add_labels(requested_samples, [y[np.where(x == s)[0][0]] for s in requested_samples])
+learner = MinimumEntropyLearner(KnnClassifier(len(np.unique(all_y))), x_labeled, y_labeled, x_unlabeled, np.unique(all_y))
+
+
+for i in range(50):
+    requested_samples = learner.get_next_samples(1)
+    if i % 5 == 0:
+        plot()
+    learner.set_labels(requested_samples, [all_y[np.where(all_x == s)[0][0]] for s in requested_samples])
+    # plot_entropy(learner.calc_entropy())
+
 
