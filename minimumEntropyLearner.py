@@ -51,7 +51,7 @@ class MinimumEntropyLearner:
         copy.fit(self.labeled_x, self.y)
         return copy
 
-    def estimate_probs(self):
+    def estimate_probs(self, selected_unlabeled_x, selected_y):
         b = np.zeros((self.l * self.m, self.l * self.m))
         for i, x_i in enumerate(self.unlabeled_x):
             for j, label_j in enumerate(self.labels):
