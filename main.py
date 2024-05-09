@@ -21,7 +21,7 @@ warnings.filterwarnings('ignore')
 all_x, all_y = make_blobs(n_samples=400,
                           n_features=5,
                           centers=np.array([[-6, -1], [10, 18], [14, -6], [-12, 18], [-10, -16]]),
-                          cluster_std=np.array([6.0, 9.0, 5.0, 4.0, 4.0]))
+                          cluster_std=np.array([4.0, 6.0, 3.0, 2.5, 2.5]))
 y_map = {0: 0, 1: 1, 2: 2, 3: 2, 4: 1}
 all_y = [y_map[y] for y in all_y]
 x_labeled, x_unlabeled, y_labeled, y_unlabeled = train_test_split(all_x, all_y, test_size=1-10/400, shuffle=True)
@@ -155,9 +155,9 @@ acc_mee = []
 for i in range(50):
     requested_samples = learner.get_next_samples(1)
     if i % 10 == 0:
-        # plot()
+        plot()
         # plot_entropy(learner.calc_entropy(learner.unlabeled_x, learner.labeled_x, learner.y))
-        plot_decision_boundary(learner.classifier)
+        # plot_decision_boundary(learner.classifier)
     learner.set_labels(requested_samples, [all_y[np.where(all_x == s)[0][0]] for s in requested_samples])
     clf = learner.build_classifier()
     acc = clf.prediction_acc(all_x, all_y)
@@ -168,20 +168,22 @@ for i in range(50):
 
 # plot()
 
-learner = init_learner()
-acc_rnd = []
 
-for i in range(50):
-    requested_samples = np.array([random.choice(learner.unlabeled_x)])
-    # if i % 5 == 0:
-        # plot()
-    learner.set_labels(requested_samples, [all_y[np.where(all_x == s)[0][0]] for s in requested_samples])
-    clf = learner.build_classifier()
-    acc = clf.prediction_acc(all_x, all_y)
-    acc_rnd.append(acc)
-    print("Prediction accuracy random", clf.prediction_acc(all_x, all_y))
-    # if i % 5 == 0:
-    #     plot_entropy(learner.calc_entropy())
+acc_rnd_sum = np.array([0 for i in range(50)], dtype=float)
+for run in range(10):
+    learner = init_learner()
+    for i in range(50):
+        requested_samples = np.array([random.choice(learner.unlabeled_x)])
+        # if i % 5 == 0:
+            # plot()
+        learner.set_labels(requested_samples, [all_y[np.where(all_x == s)[0][0]] for s in requested_samples])
+        clf = learner.build_classifier()
+        acc = clf.prediction_acc(all_x, all_y)
+        acc_rnd_sum[i] = acc_rnd_sum[i] + acc / 10
+        print("Prediction accuracy random", clf.prediction_acc(all_x, all_y))
+        # if i % 5 == 0:
+        #     plot_entropy(learner.calc_entropy())
+        # acc_rnd_sum = acc_rnd_sum + acc_rnd
 
 # plot()
 
@@ -198,8 +200,8 @@ def plot_acc():
     )
 
     plt.plot(
-        range(len(acc_rnd)),
-        acc_rnd,
+        range(len(acc_rnd_sum)),
+        acc_rnd_sum,
         label="rnd",
         color="r",
         alpha=1.0

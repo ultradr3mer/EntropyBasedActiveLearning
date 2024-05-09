@@ -40,7 +40,8 @@ class MinimumEntropyLearner:
                 prob_base = np.array([base_pred[j * m + i],
                                       list(y).count(j) / len(y),
                                       1 / len(self.labels)])
-                prob_j = np.average(prob_base, weights=[0.0, 0.0, 1.0])
+                prob_j = np.average(prob_base, weights=[1.0, 0.0, 0.0])
+
                 if not prob_j:
                     continue
 
