@@ -189,8 +189,6 @@ for run in range(10):
 
 
 def plot_acc():
-    plt.figure()
-
     plt.plot(
         range(len(acc_mee)),
         acc_mee,
@@ -207,9 +205,6 @@ def plot_acc():
         alpha=1.0
     )
 
-    plt.title('Data')
-
-    # plt.axis([-25.0, 35.0, -25.0, 40.0])
     plt.title('Data')
     plt.legend()
     plt.show()

@@ -8,7 +8,11 @@ from sklearn import preprocessing as pre
 def calc_entropy(p):
     if (p == 0 or p == 1):
         return 0
-    return -p * np.log2(p)
+
+    def ent_internal(p):
+        return -p * np.log2(p)
+
+    return ent_internal(p) + ent_internal(1 - p)
 
 
 def if_then_else(condition, when_true, when_false):
