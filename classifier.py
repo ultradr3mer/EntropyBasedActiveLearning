@@ -8,14 +8,6 @@ from sklearn.neighbors import NearestNeighbors
 
 warnings.filterwarnings('ignore')
 
-
-def if_then_else(condition, when_true, when_false):
-    if condition:
-        return when_true
-
-    return when_false
-
-
 class Classifier:
     def __init__(self, l):
         self.is_fit = False

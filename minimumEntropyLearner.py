@@ -15,13 +15,6 @@ def calc_entropy(p):
     return ent_internal(p) + ent_internal(1 - p)
 
 
-def if_then_else(condition, when_true, when_false):
-    if condition:
-        return when_true
-
-    return when_false
-
-
 class MinimumEntropyLearner:
     def __init__(self, classifier: Classifier, labeled_x, y, unlabeled_x, labels):
         self.labels = labels
