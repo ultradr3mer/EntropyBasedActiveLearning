@@ -41,8 +41,8 @@ acc_mee = []
 
 for i in range(50):
     requested_samples = learner.get_next_samples(1)
-    if i % 10 == 0:
-        plot(requested_samples, all_y, learner)
+    # if i % 10 == 0:
+        # plot(requested_samples, all_y, learner)
         # plot_entropy(learner.calc_entropy(learner.unlabeled_x, learner.labeled_x, learner.y))
         # plot_decision_boundary(learner.classifier)
     learner.set_labels(requested_samples, [all_y[np.where(all_x == s)[0][0]] for s in requested_samples])

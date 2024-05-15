@@ -6,6 +6,8 @@ from sklearn import svm
 import warnings
 from sklearn.neighbors import NearestNeighbors
 
+from util import if_then_else
+
 warnings.filterwarnings('ignore')
 
 class Classifier:
@@ -27,13 +29,14 @@ class Classifier:
 
     def prediction_acc(self, x, y):
         m = len(x)
-        pred_y = self.predict_class(x)
-        return sum([1 for predicted, actual in zip(pred_y, y) if predicted == actual]) / m
+        pred_y = self.predict_by_point(x)
+        y_probs = [[if_then_else(l == single_y, 1, 0) for l in range(self.l)] for single_y in y]
+        error = np.sum(np.abs(pred_y - y_probs)) / m / self.l
+        return 1 - error
 
     def predict_class(self, x):
-        n = 3
         probabilities = self.predict_by_point(x)
-        return np.array([np.where(p_i == max(p_i))[0][0] for p_i in probabilities])
+        return np.array([np.argmax(p_i) for p_i in probabilities])
 
     def predict_by_point(self, x):
         return np.reshape(self.predict(x), (self.l, len(x))).T
@@ -86,9 +89,18 @@ class KnnClassifier(Classifier):
 
     def predict(self, x):
         distances, indices = self.neighbors.kneighbors(x, self.n)
-        return np.array([sum([max(1 - abs(self.y[i] - label), 0) for i in indices_k]) / self.n
-                         for label in range(self.l)
-                         for indices_k in indices])
+
+        def interpolation(dist, ind, l):
+            if len(ind) == 1:
+                return max(1 - abs(self.y[ind] - l), 0)
+            weights = max(dist) - dist
+            if sum(weights) == 0:
+                weights = np.ones(self.n)
+            return np.average(np.array([max(1 - abs(self.y[i] - l), 0) for i in ind]), weights=weights)
+
+        return np.array([interpolation(dist, ind, l)
+                         for l in range(self.l)
+                         for dist, ind in zip(distances, indices)])
 
     def prediction_prob(self, x, y):
         pred_y = self.predict(x)
