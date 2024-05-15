@@ -2,26 +2,27 @@ import math
 import random
 import json
 import numpy as np
-from matplotlib import pyplot as plt
+import torch
 from sklearn.datasets import make_blobs
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import normalize
 from sklearn.cluster import KMeans
 from scipy.ndimage import gaussian_filter
+from torch import nn
+from torch.utils.data import DataLoader
 
 from classifier import KnnClassifier
-from plotFunctions import plot_dataset, plot, plot_img
+from deepLearner import DeepLearner, x_resolution, LearnerDataset
+from plotFunctions import plot_img
 from util import if_then_else
 
 import cv2
-import os
 
 dataset_fielname = 'dataset.json'
 class_count = 12
 data_range = 20
-res = 32
+uint16_max = 2 ** 16
 
+res = x_resolution
 
 class Generator:
     def __init__(self):
@@ -63,19 +64,133 @@ class Generator:
 
 
 class DeepTrainer(object):
-    def __init__(self, data_set):
+    def __init__(self, data_set, learner):
         self.data_set = data_set
         self.clf = KnnClassifier(2, 3)
         self.counter = 0
         self.random = random.Random('sidjhf')
+        self.learner = learner
+
+    def load_or_gen_train_data(self, dataset, number):
+        folder = 'data'
+        try:
+            x = self.load_from_image(f'{folder}/{number}_x.png')
+            y = self.load_from_image(f'{folder}/{number}_y.png')
+            return x, y
+        except FileNotFoundError:
+            x, y = self.gen_training_histogram(dataset)
+            self.save_as_image(x, f'{folder}/{number}_x.png')
+            self.save_as_image(y, f'{folder}/{number}_y.png')
+            return x, y
+
+    def train_step(self, dataloader, model, loss_fn, optimizer):
+        device = self.learner.device
+        size = len(dataloader.dataset)
+        model.train()
+        for batch, (X, y) in enumerate(dataloader):
+            X, y = X.to(device), y.to(device)
+
+            # Compute prediction error
+            pred = model(X)
+            loss = loss_fn(pred, y)
+
+            # Backpropagation
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+            if batch % 100 == 0:
+                loss, current = loss.item(), (batch + 1) * len(X)
+                print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+
+    def test(self, dataloader, model, loss_fn):
+        device = self.learner.device
+        size = len(dataloader.dataset)
+        num_batches = len(dataloader)
+        model.eval()
+        test_loss = 0 #, correct = 0, 0
+        with torch.no_grad():
+            for X, y in dataloader:
+                X, y = X.to(device), y.to(device)
+                pred = model(X)
+                test_loss += loss_fn(pred, y).item()
+                # correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+        test_loss /= num_batches
+        # correct /= size
+        print(f"Test Error: Avg loss: {test_loss:>8f} \n")
 
     def train(self):
-        for i, item in enumerate(self.data_set):
-            if i < 40:
-                continue
-            self.histogram(item, i, 'data')
+        model = self.learner.model
+        indexed_data = list(enumerate(self.data_set))
+        train, test = train_test_split(indexed_data, test_size=0.1, shuffle=True)
+        train_dataloader = self.setup_dataloader(train)
+        test_dataloader = self.setup_dataloader(test)
 
-    def histogram(self, item, number, folder):
+        for X, y in test_dataloader:
+            print(f"Shape of X [N, C, H, W]: {X.shape}")
+            print(f"Shape of y: {y.shape} {y.dtype}")
+            break
+
+        loss_fn = nn.CrossEntropyLoss()
+        optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+
+        epochs = 5
+        for t in range(epochs):
+            print(f"Epoch {t + 1}\n-------------------------------")
+            self.train_step(train_dataloader, model, loss_fn, optimizer)
+            self.test(test_dataloader, model, loss_fn)
+        print("Done!")
+
+
+        #
+        # for i, item in enumerate(self.data_set):
+        #     # if i < 40:
+        #     #     continue
+        #     x, y = self.load_or_gen_train_data(item, i)
+        #
+        #     batch_size = 64
+
+            # Create data loaders.
+
+    def setup_dataloader(self, data):
+        data_full = list([self.load_or_gen_train_data(item, i) for i, item in data])
+        my_dataset = LearnerDataset(data_full)
+        return DataLoader(my_dataset, batch_size=32, shuffle=True)
+
+    def sainty_check(self, item, y):
+        all_x, all_y = item
+        all_x = np.array(all_x)
+        all_y = np.array(all_y)
+        classes = np.unique(all_y)
+        labeled_i = self.means_set(all_x, 5)
+        remaining_x = np.array([x for i, x in enumerate(all_x) if i not in labeled_i])
+        remaining_y = np.array([y for i, y in enumerate(all_y) if i not in labeled_i])
+        initial_x = np.array(all_x[labeled_i])
+        initial_y = np.array(all_y[labeled_i])
+
+        initial_acc = self.calc_acc(initial_x, initial_y, all_x, all_y)
+
+        point_coords = self.gen_point_coords(res)
+
+        point_bins = [b for row in self.bin(1, remaining_x[np.where(remaining_y == 0)]) for b in self.bin(0, row)]
+        top_y = list(enumerate(y.reshape(-1)))
+        top_y.sort(key=lambda x: x[1], reverse=True)
+        top_idx = np.array([i for i, y in top_y])
+        top_points = np.array([p for i in top_idx for p in point_bins[i]])[:100]
+        # for
+
+        def acc_for_point(p):
+            acc = self.calc_acc(np.concatenate((initial_x, [p])),
+                                np.concatenate((initial_y, [0])),
+                                all_x,
+                                all_y)
+            return acc
+
+        acc = [acc_for_point(p)-initial_acc for p in top_points]
+
+        pass
+
+    def gen_training_histogram(self, item):
         all_x, all_y = item
         all_x = np.array(all_x)
         all_y = np.array(all_y)
@@ -89,11 +204,12 @@ class DeepTrainer(object):
         map_label_0 = gaussian_filter(self.histogram_class(initial_x[np.where(initial_y == 0)]), sigma=2)
         map_label_1 = gaussian_filter(self.histogram_class(initial_x[np.where(initial_y == 1)]), sigma=2)
         map_unlabeled = gaussian_filter(self.histogram_class(remaining_x), sigma=2)
-        x = np.array(list(zip(map_unlabeled.reshape(-1), map_label_0.reshape(-1), map_label_1.reshape(-1)))).reshape(
-            res, -1)
+        rows_a = np.dstack((map_unlabeled, map_label_1)).reshape(res, -1)
+        rows_B = np.dstack((map_label_0, map_unlabeled - map_label_0 - map_label_1)).reshape(res, -1)
+        x = np.dstack((rows_a.T, rows_B.T)).reshape(res * 2, -1).T
+        # x = np.array(list(zip(map_unlabeled.reshape(-1), map_label_0.reshape(-1), map_label_1.reshape(-1)))).reshape(
+        #     res, -1)
         x = self.normalize(x)
-
-        self.save_as_image(x, f'{folder}/{number}_x.png')
 
         initial_acc = self.calc_acc(initial_x, initial_y, all_x, all_y)
 
@@ -103,7 +219,6 @@ class DeepTrainer(object):
         #      remaining_x,
         #      remaining_y)
 
-
         def acc_for_point(p):
             acc = self.calc_acc(np.concatenate((initial_x, [p])),
                                 np.concatenate((initial_y, [0])),
@@ -112,13 +227,8 @@ class DeepTrainer(object):
             return acc
 
         discovery_map = self.histogram_class([all_x[i] for i in self.means_set(all_x, 30)]).reshape(-1)
-        cell_size = data_range * 2 / res
-        cell_center = data_range - cell_size / 2
-        x_list = np.linspace(-cell_center, cell_center, res)
-        y_list = np.linspace(-cell_center, cell_center, res)
-        point_coords = np.array([[x, y]
-                                 for y_idx, y in enumerate(y_list)
-                                 for x_idx, x in enumerate(x_list)])
+
+        point_coords = self.gen_point_coords(res)
         # plot_img(self.clf.predict_by_point(point_coords).reshape(res, res, 2)[:,:,0])
 
         map_unlabeled_flat = map_unlabeled.reshape(-1)
@@ -160,39 +270,28 @@ class DeepTrainer(object):
             current_acc = np.concatenate((current_acc, new_acc))
             remaining_points = [i for i in remaining_points if i not in current_points]
 
-        pass
-
-        #
-        # def acc_map_cell(x_idx, x, y_idx, y):
-        #     if map_unlabeled[y_idx][x_idx] == 0.0:
-        #         return 0
-        #     acc_for_point(np.array([x, y]))
-
-        pred = np.zeros((res, res)).reshape(-1)
-        pred = discovery_hotmap.predict(point_coords)
-        # for acc_idx, point_idx in enumerate(remaining_points):
-        #     pred[point_idx] = discovery_hotmap.predict([point_coords[point_idx]])
-        # for i, a in zip(current_points, current_acc):
-        #     pred[i] = a
-        pred = np.array([max(a, initial_acc) for a in pred])
-        pred = self.normalize(pred)
-        # plot_img(pred.reshape(res, res))
+        y_res = res
+        y = np.zeros((res, res)).reshape(-1)
+        y = discovery_hotmap.predict(self.gen_point_coords(y_res)).reshape(y_res, y_res)
+        # map_unlabeled_high = gaussian_filter(self.histogram_class(remaining_x, y_res), sigma=2)
+        density_hard = np.array(self.contrast(self.normalize(map_unlabeled), 0.2, 0.3))
+        y = self.normalize(np.array([max(a, initial_acc) for a in y.reshape(-1)])).reshape(y_res, y_res)
+        y = y * density_hard
+        plot_img(y)
 
         # plot(initial_x, remaining_x, remaining_y)
 
-        self.save_as_image(pred.reshape(res, res), f'{folder}/{number}_y.png')
+        # plot_map = np.dstack((self.histogram_class(all_x[np.where(all_y == 0)]),
+        #                       self.histogram_class(all_x[np.where(all_y == 1)]),
+        #                       self.histogram_class(initial_x)))
+        # pixel = np.array([if_then_else(x > 0, 255, 0) for x in plot_map.reshape(-1)]).reshape(plot_map.shape)
+        # cv2.imwrite(f'{folder}/{number}_plot.png', pixel)
 
-        plot_map = np.dstack((self.histogram_class(all_x[np.where(all_y == 0)]),
-                              self.histogram_class(all_x[np.where(all_y == 1)]),
-                              self.histogram_class(initial_x)))
-        pixel = np.array([if_then_else(x > 0, 255, 0) for x in plot_map.reshape(-1)]).reshape(plot_map.shape)
-        cv2.imwrite(f'{folder}/{number}_plot.png', pixel)
+        return x, y
 
-        pass
-
-    def histogram_class(self, x):
+    def histogram_class(self, x, bins=res):
         x = np.array(x)
-        H, x_edges, y_edges = np.histogram2d(x[:, 0], x[:, 1], bins=res,
+        H, x_edges, y_edges = np.histogram2d(x[:, 0], x[:, 1], bins=bins,
                                              range=[[-data_range, data_range], [-data_range, data_range]])
         H = np.log(H + 1)
         return H.T
@@ -236,9 +335,24 @@ class DeepTrainer(object):
         return self.clf.prediction_acc(valid_x, valid_y)
 
     def save_as_image(self, x, filename):
-        image = cv2.cvtColor(np.array(x * 2 ** 16, dtype='uint16'), cv2.CV_16U)
+        image = cv2.cvtColor(np.array(x * uint16_max, dtype='uint16'), cv2.CV_16U)
         cv2.imwrite(filename, image)
         pass
+
+    def load_from_image(self, filename):
+        return np.array(cv2.imread(filename, -1)[:, :, 0], dtype=float) / uint16_max
+    def contrast(self, ary, low, high):
+        return np.array([(max(min(d, high), low) - low) / (high - low) for d in ary.reshape(-1)]).reshape(ary.shape)
+
+    def gen_point_coords(self, res):
+        cell_size = data_range * 2 / res
+        cell_center = data_range - cell_size / 2
+        x_list = np.linspace(-cell_center, cell_center, res)
+        y_list = np.linspace(-cell_center, cell_center, res)
+        point_coords = np.array([[x, y]
+                                 for y_idx, y in enumerate(y_list)
+                                 for x_idx, x in enumerate(x_list)])
+        return point_coords
 
 
 class Main:
@@ -253,7 +367,7 @@ class Main:
         except FileNotFoundError:
             gen = Generator()
             data_set = []
-            for i in range(500):
+            for i in range(2000):
                 x, y = gen.generate()
                 data_set.append([list(x), y])
             json_string = json.dumps(data_set)
@@ -263,7 +377,7 @@ class Main:
 
     def run(self):
         data_set = self.load_or_create_dataset()
-        trainer = DeepTrainer(data_set)
+        trainer = DeepTrainer(data_set, DeepLearner())
         trainer.train()
 
 
