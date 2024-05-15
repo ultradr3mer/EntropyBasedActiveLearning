@@ -73,14 +73,13 @@ class KnnClassifier(Classifier):
     def __init__(self, l, n):
         super().__init__(l)
         self.n = n
-        self.clf = svm.SVC(kernel='linear', degree=7, C=20, verbose=True)
         self.normalizer = None
         self.x = np.empty((0, 2))
         self.y = []
         self.neighbors = None
 
     def fit(self, x, y):
-        self.neighbors = NearestNeighbors(n_neighbors=2, algorithm='ball_tree').fit(x)
+        self.neighbors = NearestNeighbors(n_neighbors=self.n, algorithm='ball_tree').fit(x)
         self.x = x
         self.y = y
         self.is_fit = True

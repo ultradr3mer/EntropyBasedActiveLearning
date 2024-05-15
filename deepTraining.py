@@ -9,8 +9,11 @@ from sklearn.preprocessing import normalize
 from sklearn.cluster import KMeans
 
 from classifier import KnnClassifier
-from plotFunctions import plot_dataset, plot
+from plotFunctions import plot_dataset, plot, plot_img
 from util import if_then_else
+
+import cv2
+import os
 
 dataset_fielname = 'dataset.json'
 class_count = 12
@@ -61,62 +64,105 @@ class DeepTrainer(object):
     def __init__(self, data_set):
         self.data_set = data_set
         self.clf = KnnClassifier(class_count, 3)
+        self.counter = 0
+        self.random = random.Random('sidjhf')
 
     def train(self):
-        item = self.data_set[0]
-        self.histogram(item)
+        number = 1
+        item = self.data_set[number]
+        self.histogram(item, number)
 
-    def histogram(self, item):
+    def histogram(self, item, number):
         all_x, all_y = item
-        # self.clf.fit(x_labeled, y_labeled)
-        # x_list = np.linspace(-20, 20, res)
-        # y_list = np.linspace(-20, 20, res)
-        # xx, yy = np.meshgrid(x_list, y_list)
-        # request = [[x,y] for y in y_list for x in x_list]
-        # predict = self.clf.predict_class(request)
-        # zz = predict.reshape((res, res))
         all_x = np.array(all_x)
         all_y = np.array(all_y)
         classes = np.unique(all_y)
-        labeled_i = self.initial_set(all_x, 10)
+        labeled_i = self.means_set(all_x, 5)
         remaining_x = np.array([x for i, x in enumerate(all_x) if i not in labeled_i])
         remaining_y = np.array([y for i, y in enumerate(all_y) if i not in labeled_i])
         initial_x = np.array(all_x[labeled_i])
         initial_y = np.array(all_y[labeled_i])
         map_label_0 = self.histogram_class(initial_x[np.where(initial_y == 0)])
         map_label_1 = self.histogram_class(initial_x[np.where(initial_y == 1)])
-        map_unlabeled = self.histogram_class(remaining_x)
-        # H, x_edges, y_edges = np.histogram2d(all_x[:,0], all_x[:,1], bins=res, range=[[-range, range], [-range, range]])
-        # H = np.log(H + 1)
-        x = np.array(list(zip(map_unlabeled.reshape(-1), map_label_0.reshape(-1), map_label_1.reshape(-1))))
-        x = self.normalize_map(x)
+        map_unlabeled = self.histogram_class(remaining_x).reshape(-1)
+
+        x = np.array(list(zip(map_unlabeled, map_label_0.reshape(-1), map_label_1.reshape(-1)))).reshape(
+            res, -1)
+        x = self.normalize(x)
+
+        self.save_as_image(x, f'data/{number}_x.png')
 
         initial_acc = self.calc_acc(initial_x, initial_y, all_x, all_y)
-        # y_acc = np.array([self.calc_acc(np.concatenate((initial_x, xy[0].reshape(-1,2)), axis=0),
-        #                                 np.concatenate((initial_y, [remaining_y[0]])),
-        #                                 all_x,
-        #                                 all_y)
-        #                   for xy in zip(remaining_x, remaining_y)])
+
+        def acc_for_point(p):
+            acc = max([self.calc_acc(np.concatenate((initial_x, p.reshape(1, 2))),
+                                     np.concatenate((initial_y, [c])),
+                                     all_x,
+                                     all_y) for c in classes])
+            return max(acc - initial_acc, 0)
+
+        discovery_map = self.histogram_class([all_x[i] for i in self.means_set(all_x, 30)]).reshape(-1)
         cell_size = data_range * 2 / res
         cell_center = data_range - cell_size / 2
         x_list = np.linspace(-cell_center, cell_center, res)
         y_list = np.linspace(-cell_center, cell_center, res)
-        acc_map = np.array([[if_then_else(map_unlabeled[y_idx][x_idx] > 0.0, max(max(
-            [self.calc_acc(np.concatenate((initial_x, np.array([x, y]).reshape(1, 2))),
-                           np.concatenate((initial_y, [c])),
-                           all_x,
-                           all_y) for c in classes]) - initial_acc, 0), 0)
-                             for x_idx, x in enumerate(x_list)] for y_idx, y in enumerate(y_list)]).reshape(-1)
-        acc_map = normalize(acc_map.reshape(-1, 1), norm='max', axis=0).reshape(res, res)
-        # acc_map = self.max_y_map(points)
+        point_coords = np.array([[x, y]
+                                 for y_idx, y in enumerate(y_list)
+                                 for x_idx, x in enumerate(x_list)])
+        discovery_points = np.array([i for i, coord in enumerate(point_coords) if map_unlabeled[i] > 0])
+        current_points = np.array([i for i in discovery_points if discovery_map[i] > 0.0])
+        current_acc = np.array([acc_for_point(point_coords[i]) for i in current_points])
+        remaining_points = [i for i in discovery_points if discovery_map[i] == 0.0]
 
-        plt.imshow(acc_map, origin='lower', extent=[-data_range, data_range, -data_range, data_range], cmap='viridis')
-        plt.colorbar(label='Counts')
-        plt.xlabel('X values')
-        plt.ylabel('Y values')
-        plt.title('2D Histogram')
-        plt.show()
-        plot(initial_x, remaining_x, remaining_y)
+        acc_map = np.zeros((res, res)).reshape(-1)
+        for acc_idx, point_idx in enumerate(current_points):
+            acc_map[point_idx] = current_acc[acc_idx]
+        plot_img(acc_map.reshape(res, res))
+
+        discovery_hotmap = KnnClassifier(1, 2)
+        for i in range(4):
+            if len(remaining_points) < 10:
+                return
+
+            discovery_hotmap.fit([point_coords[i] for i in current_points], current_acc)
+
+            plot(np.array([point_coords[i] for i in current_points]),
+                 np.array([point_coords[i] for i in remaining_points]),
+                 np.array([1 for i in remaining_points]))
+
+            acc_map = 1.0 - discovery_hotmap.predict(point_coords)
+            plot_img(acc_map.reshape(res, res))
+
+            weights = self.normalize(1 - discovery_hotmap.predict([point_coords[i]
+                                                                 for i in
+                                                                 remaining_points])) + 0.1
+            additional_points = self.random.choices(remaining_points,
+                                                    weights=weights,
+                                                    k=10)
+            current_points = np.concatenate((current_points, additional_points))
+            new_acc = [acc_for_point(point_coords[i]) for i in additional_points]
+            current_acc = np.concatenate((current_acc, new_acc))
+            remaining_points = [i for i in remaining_points if i not in current_points]
+
+        pass
+
+        #
+        # def acc_map_cell(x_idx, x, y_idx, y):
+        #     if map_unlabeled[y_idx][x_idx] == 0.0:
+        #         return 0
+        #     acc_for_point(np.array([x, y]))
+
+        acc_map = np.zeros((res, res)).reshape(-1)
+        for acc_idx, point_idx in enumerate(remaining_points):
+            acc_map[point_idx] = 1.0 - discovery_hotmap.predict([point_coords[point_idx]])
+        for acc_idx, point_idx in enumerate(current_points):
+            acc_map[point_idx] = current_acc[acc_idx]
+        acc_map = self.normalize(acc_map)
+        plot_img(acc_map.reshape(res, res))
+
+        # plot(initial_x, remaining_x, remaining_y)
+
+        self.save_as_image(acc_map, f'data/{number}_y.png')
 
         pass
 
@@ -135,8 +181,10 @@ class DeepTrainer(object):
     #     cells = [[max([p[2] for p in b], default=0) for b in bin(0, r)] for r in rows]
     #     return np.array(cells).reshape(res, res)
 
-    def normalize_map(self, x):
-        return normalize(x.reshape(-1, 1), norm='max', axis=0).reshape(res, -1) * 2 - 1
+    def normalize(self, x):
+        x = x - np.min(x)
+        x = x / np.max(x)
+        return x
 
     def bin(self, axis, points):
         thresholds = np.linspace(-20, 20, res + 1)
@@ -150,8 +198,8 @@ class DeepTrainer(object):
             bins.append(cur_bin)
         return bins
 
-    def initial_set(self, x, n):
-        kmeans = KMeans(n_clusters=n)
+    def means_set(self, x, n):
+        kmeans = KMeans(n_clusters=n, random_state=3456987)
         kmeans.fit(x)
         centroids = kmeans.cluster_centers_
         indices = np.array([np.argmin([np.linalg.norm(x - c) for i, x in enumerate(x)]) for c in centroids])
@@ -159,7 +207,14 @@ class DeepTrainer(object):
 
     def calc_acc(self, train_x, train_y, valid_x, valid_y):
         self.clf.fit(train_x, train_y)
+        self.counter = self.counter + 1
+        print(self.counter)
         return self.clf.prediction_acc(valid_x, valid_y)
+
+    def save_as_image(self, x, filename):
+        image = cv2.cvtColor(np.array(x * 2 ** 16, dtype='uint16'), cv2.CV_16U)
+        cv2.imwrite(filename, image)
+        pass
 
 
 class Main:

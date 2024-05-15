@@ -13,6 +13,7 @@ import warnings
 from classifier import SvmClassifier, KnnClassifier, Classifier
 from minimumEntropyLearner import MinimumEntropyLearner
 
+
 def plot_dataset(x, y):
     # This function would plot the generated points
     plt.figure()
@@ -87,11 +88,13 @@ def plot_entropy(entropy):
     plt.legend()
     plt.show()
 
+
 def plot_contours(ax, clf, xx, yy, **params):
     Z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
     Z = Z.reshape(xx.shape)
     out = ax.contourf(xx, yy, Z, **params)
     return out
+
 
 def plot_decision_boundary(clf: Classifier):
     h = 1
@@ -105,6 +108,7 @@ def plot_decision_boundary(clf: Classifier):
     plt.contourf(xx, yy, zz, marker='o', color='k', linestyle='none')
     plt.axis()
     plt.show()
+
 
 def plot_acc():
     plt.figure()
@@ -130,4 +134,13 @@ def plot_acc():
     # plt.axis([-25.0, 35.0, -25.0, 40.0])
     plt.title('Data')
     plt.legend()
+    plt.show()
+
+
+def plot_img(img):
+    plt.imshow(img, origin='lower', cmap='viridis')
+    plt.colorbar(label='Counts')
+    plt.xlabel('X values')
+    plt.ylabel('Y values')
+    plt.title('2D Histogram')
     plt.show()
