@@ -97,7 +97,6 @@ class LearnerDataset(Dataset):
 
 
 if __name__ == '__main__':
-    from deepTraining import Main
-
-    main = Main()
-    main.run()
+    from deepTraining import DeepTrainer
+    t = DeepTrainer()
+    t.train()
