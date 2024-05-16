@@ -20,46 +20,25 @@ class DeepLearner:
             else "cpu"
         )
         print(f"Using {device} device")
-        model = NeuralNetwork().to(device)
+        model = NnConv().to(device)
         print(model)
         self.model = model
         self.device = device
 
 
-class NeuralNetwork(nn.Module):
+class NnFully(nn.Module):
     def __init__(self):
         super().__init__()
-        self.flatten = nn.Flatten()
-        inner_res = int(x_resolution ** 2 / 2)
+        self.flatten = nn.Flatten(1)
+        inner_res = x_resolution ** 2
         self.linear_relu_stack = nn.Sequential(
             nn.Linear(x_resolution ** 2 * 3, inner_res),
             nn.ReLU(),
             nn.Linear(inner_res, inner_res),
             nn.ReLU(),
             nn.Linear(inner_res, y_resolution ** 2),
-            nn.Unflatten(1, torch.Size([y_resolution, y_resolution]))
+            nn.Unflatten(1, torch.Size([1, y_resolution, y_resolution]))
         )
-        # self.conv_stack = nn.Sequential(
-        #     nn.Conv2d(3, 12, kernel_size=3, padding=1),  # Input channels: 1 (grayscale)
-        #     nn.ReLU(),
-        #     nn.MaxPool2d(2, 2),
-        #     nn.Conv2d(12, 12, kernel_size=3, padding=1),
-        #     nn.ReLU(),
-        #     # nn.MaxPool2d(3, 2),
-        #     # nn.Conv2d(32, 64, kernel_size=3, padding=1),
-        #     # nn.ReLU(),
-        #     # nn.MaxPool2d(3, 2)
-        # )
-        # self.flatten = nn.Flatten()
-        #
-        # in_features = self.conv_stack(torch.tensor(np.ones((3, 64, 64)), dtype=torch.float32))
-        #
-        # self.linear_stack = nn.Sequential(
-        #     nn.Linear(np.prod(in_features.shape), 512),
-        #     nn.ReLU(),
-        #     nn.Linear(512, y_resolution ** 2),
-        #     nn.Unflatten(1, torch.Size([32, 32]))
-        # )
 
     def forward(self, x):
         x = self.flatten(x)
@@ -67,24 +46,47 @@ class NeuralNetwork(nn.Module):
         return x
 
 
+class NnConv(nn.Module):
+    def __init__(self):
+        super().__init__()
+        kernel_size = 9
+        padding = int((kernel_size / 2))
+        self.conv_stack = nn.Sequential(
+            nn.Conv2d(5, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
+            nn.ReLU(),
+            nn.Conv2d(12, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
+            nn.MaxPool2d(2, 2),
+            nn.ReLU(),
+            nn.Conv2d(12, 1, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
+        )
+
+    def forward(self, x):
+        x = self.conv_stack(x)
+        return x
+
+
 class LearnerDataset(Dataset):
-    def __init__(self, data_full):
-        x = np.array([d[0] for d in data_full])
-        y = np.array([d[1] for d in data_full])
+    def __init__(self, data):
+        # if not flattern:
+        #     x = np.array([np.array(d[0]).reshape(-1) for d in data])
+        #     y = np.array([np.array(d[1]).reshape(-1) for d in data])
+        # else:
+        x = np.array([np.concatenate((d[0], d[2][:2]),0) for d in data])
+        # x = np.array([d[0] for d in data])
+        y = np.array([[d[1]] for d in data])
 
-        self.x = torch.Tensor(x)
-        self.y = torch.Tensor(y)
+        self.x = torch.tensor(x, dtype=torch.float)
+        self.y = torch.tensor(y, dtype=torch.float)
 
-        self.transform = transforms.Compose([transforms.RandomAffine(degrees=0,
-                                                                     translate=(0.1, 0.1),
-                                                                     scale=(0.8, 1.2)),
-                                             transforms.RandomHorizontalFlip(p=0.5),
-                                             transforms.RandomVerticalFlip(p=0.5)])
+        # self.transform = transforms.Compose([transforms.RandomAffine(degrees=0,
+        #                                                              translate=(0.1, 0.1),
+        #                                                              scale=(0.8, 1.2)),
+        #                                      transforms.RandomHorizontalFlip(p=0.5),
+        #                                      transforms.RandomVerticalFlip(p=0.5)])
         # img = self.x[1]
         # cv2.imwrite("testa.png", img[2].numpy() * 2**8)
         # img = self.transform(img)
         # cv2.imwrite("testb.png", img[2].numpy() * 2**8)
-
 
     def __len__(self):
         return len(self.x)
