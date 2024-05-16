@@ -1,4 +1,5 @@
 import math
+import os
 import random
 import json
 import numpy as np
@@ -7,11 +8,11 @@ from sklearn.datasets import make_blobs
 from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from scipy.ndimage import gaussian_filter
-from torch import nn
+from torch import nn, optim
 from torch.utils.data import DataLoader
 
 from classifier import KnnClassifier
-from deepLearner import DeepLearner, x_resolution, LearnerDataset
+from deepLearner import DeepLearner, x_resolution, y_resolution, LearnerDataset
 from plotFunctions import plot_img
 from util import if_then_else
 
@@ -23,6 +24,7 @@ data_range = 20
 uint16_max = 2 ** 16
 
 res = x_resolution
+
 
 class Generator:
     def __init__(self):
@@ -71,17 +73,28 @@ class DeepTrainer(object):
         self.random = random.Random('sidjhf')
         self.learner = learner
 
+    def join_channels(self, x):
+        target_res = int(x.shape[0] / 2)
+        row_merge = np.rot90(x[:, :, 0].reshape(target_res * 2, target_res, 2))
+        return np.rot90(row_merge.reshape(target_res, target_res, 4), k=-1)[:, :, :3]
+
     def load_or_gen_train_data(self, dataset, number):
         folder = 'data'
+        x_filename = f'{folder}/{number}_x.png'
+        y_filename = f'{folder}/{number}_y.png'
         try:
-            x = self.load_from_image(f'{folder}/{number}_x.png')
-            y = self.load_from_image(f'{folder}/{number}_y.png')
+            x = self.load_from_image(x_filename)[:3]
+            y = self.load_from_image(y_filename)[0]
+            if x.shape != (3, 64, 64) or y.shape != (32, 32):
+                os.remove(x_filename)
+                os.remove(y_filename)
+                raise FileNotFoundError()
             return x, y
         except FileNotFoundError:
             x, y = self.gen_training_histogram(dataset)
-            self.save_as_image(x, f'{folder}/{number}_x.png')
-            self.save_as_image(y, f'{folder}/{number}_y.png')
-            return x, y
+            self.save_as_image(x, x_filename)
+            self.save_as_image(y, y_filename)
+            return np.array(cv2.split(x)), y
 
     def train_step(self, dataloader, model, loss_fn, optimizer):
         device = self.learner.device
@@ -108,7 +121,7 @@ class DeepTrainer(object):
         size = len(dataloader.dataset)
         num_batches = len(dataloader)
         model.eval()
-        test_loss = 0 #, correct = 0, 0
+        test_loss = 0  # , correct = 0, 0
         with torch.no_grad():
             for X, y in dataloader:
                 X, y = X.to(device), y.to(device)
@@ -131,16 +144,16 @@ class DeepTrainer(object):
             print(f"Shape of y: {y.shape} {y.dtype}")
             break
 
-        loss_fn = nn.CrossEntropyLoss()
-        optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
-
-        epochs = 5
+        loss_fn = nn.MSELoss()
+        optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.7)
+        epochs = 50
         for t in range(epochs):
             print(f"Epoch {t + 1}\n-------------------------------")
+            scheduler.step(t)
             self.train_step(train_dataloader, model, loss_fn, optimizer)
             self.test(test_dataloader, model, loss_fn)
         print("Done!")
-
 
         #
         # for i, item in enumerate(self.data_set):
@@ -150,7 +163,7 @@ class DeepTrainer(object):
         #
         #     batch_size = 64
 
-            # Create data loaders.
+        # Create data loaders.
 
     def setup_dataloader(self, data):
         data_full = list([self.load_or_gen_train_data(item, i) for i, item in data])
@@ -177,6 +190,7 @@ class DeepTrainer(object):
         top_y.sort(key=lambda x: x[1], reverse=True)
         top_idx = np.array([i for i, y in top_y])
         top_points = np.array([p for i in top_idx for p in point_bins[i]])[:100]
+
         # for
 
         def acc_for_point(p):
@@ -186,7 +200,7 @@ class DeepTrainer(object):
                                 all_y)
             return acc
 
-        acc = [acc_for_point(p)-initial_acc for p in top_points]
+        acc = [acc_for_point(p) - initial_acc for p in top_points]
 
         pass
 
@@ -204,9 +218,7 @@ class DeepTrainer(object):
         map_label_0 = gaussian_filter(self.histogram_class(initial_x[np.where(initial_y == 0)]), sigma=2)
         map_label_1 = gaussian_filter(self.histogram_class(initial_x[np.where(initial_y == 1)]), sigma=2)
         map_unlabeled = gaussian_filter(self.histogram_class(remaining_x), sigma=2)
-        rows_a = np.dstack((map_unlabeled, map_label_1)).reshape(res, -1)
-        rows_B = np.dstack((map_label_0, map_unlabeled - map_label_0 - map_label_1)).reshape(res, -1)
-        x = np.dstack((rows_a.T, rows_B.T)).reshape(res * 2, -1).T
+        x = np.dstack((map_unlabeled, map_label_0, map_label_1))
         # x = np.array(list(zip(map_unlabeled.reshape(-1), map_label_0.reshape(-1), map_label_1.reshape(-1)))).reshape(
         #     res, -1)
         x = self.normalize(x)
@@ -270,14 +282,13 @@ class DeepTrainer(object):
             current_acc = np.concatenate((current_acc, new_acc))
             remaining_points = [i for i in remaining_points if i not in current_points]
 
-        y_res = res
-        y = np.zeros((res, res)).reshape(-1)
-        y = discovery_hotmap.predict(self.gen_point_coords(y_res)).reshape(y_res, y_res)
-        # map_unlabeled_high = gaussian_filter(self.histogram_class(remaining_x, y_res), sigma=2)
-        density_hard = np.array(self.contrast(self.normalize(map_unlabeled), 0.2, 0.3))
-        y = self.normalize(np.array([max(a, initial_acc) for a in y.reshape(-1)])).reshape(y_res, y_res)
+        y = np.zeros((y_resolution, y_resolution)).reshape(-1)
+        y = discovery_hotmap.predict(self.gen_point_coords(y_resolution)).reshape(y_resolution, y_resolution)
+        map_unlabeled_low = gaussian_filter(self.histogram_class(remaining_x, y_resolution), sigma=1)
+        density_hard = np.array(self.contrast(self.normalize(map_unlabeled_low), 0.2, 0.3))
+        y = self.normalize(np.array([max(a, initial_acc) for a in y.reshape(-1)])).reshape(y_resolution, y_resolution)
         y = y * density_hard
-        plot_img(y)
+        # plot_img(y)
 
         # plot(initial_x, remaining_x, remaining_y)
 
@@ -340,7 +351,11 @@ class DeepTrainer(object):
         pass
 
     def load_from_image(self, filename):
-        return np.array(cv2.imread(filename, -1)[:, :, 0], dtype=float) / uint16_max
+        img = cv2.imread(filename, -1)
+        if img is None:
+            raise FileNotFoundError(f"Image with {filename} could not be loaded.")
+        return np.array(cv2.split(img), dtype=float) / uint16_max
+
     def contrast(self, ary, low, high):
         return np.array([(max(min(d, high), low) - low) / (high - low) for d in ary.reshape(-1)]).reshape(ary.shape)
 
