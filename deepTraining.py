@@ -1,12 +1,15 @@
 import random
 
+import numpy as np
 import torch
 from sklearn.model_selection import train_test_split
 from torch import nn, optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 
-from deepLearner import DeepLearner, LearnerDataset
+from deepLearner import DeepLearner, model_file_name
 from generator import Generator
+from learnerDataset import LearnerDataset
+import plotFunctions
 
 
 class DeepTrainer(object):
@@ -65,16 +68,24 @@ class DeepTrainer(object):
             break
 
         loss_fn = nn.MSELoss()
-        optimizer = torch.optim.SGD(model.parameters(), lr=1e-1)
+        optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
 
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
-        epochs = 50
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.2)
+        epochs = 100
         for t in range(epochs):
             print(f"Epoch {t + 1}\n-------------------------------")
             scheduler.step(t)
             self.train_step(train_dataloader, model, loss_fn, optimizer)
             self.test(test_dataloader, model, loss_fn)
         print("Done!")
+
+        torch.save(model.state_dict(), model_file_name)
+
+        def create_image(d):
+            r = self.gen.normalize(d[0])
+            g = self.gen.normalize(d[1])
+            b = self.gen.normalize(d[2])
+            return np.dstack((r,g,b))
 
         i_pred = 0
         i_actual = 0
@@ -84,19 +95,22 @@ class DeepTrainer(object):
                 X, y = X.to(self.learner.device), y
                 pred = model(X)
                 for p in pred:
-                    self.gen.save_as_image(self.gen.normalize(p[0].cpu().numpy()),f'result/{i_pred}_pred.png')
+                    self.gen.save_as_image(self.gen.normalize(p.cpu().numpy()[0]), f'result/{i_pred}_pred.png')
                     i_pred += 1
                 for item in y:
-                    self.gen.save_as_image(self.gen.normalize(item[0].cpu().numpy()),f'result/{i_actual}_actual.png')
+                    self.gen.save_as_image(self.gen.normalize(item.cpu().numpy()[0]), f'result/{i_actual}_actual.png')
                     i_actual += 1
                 for item in X:
-                    self.gen.save_as_image(self.gen.normalize(item[2].cpu().numpy()), f'result/{i_x}_x.png')
+                    self.gen.save_as_image(create_image(item.cpu().numpy()), f'result/{i_x}_x.png')
                     i_x += 1
 
     def setup_dataloader(self, data):
         data_full = list([self.gen.load_or_gen_train_data(item, i) for i, item in data])
+        # for i in range(len(data_full)):
+        #     self.gen.sainty_check(data[0][1], data_full[0][1][2])
         my_dataset = LearnerDataset(data_full)
         return DataLoader(my_dataset, batch_size=32, shuffle=True)
+
 
 if __name__ == '__main__':
     trainer = DeepTrainer()

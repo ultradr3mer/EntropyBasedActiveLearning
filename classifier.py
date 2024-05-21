@@ -39,6 +39,8 @@ class Classifier:
         return np.array([np.argmax(p_i) for p_i in probabilities])
 
     def predict_by_point(self, x):
+        if len(x) == 0:
+            return np.empty((0, 2))
         return np.reshape(self.predict(x), (self.l, len(x))).T
 
 

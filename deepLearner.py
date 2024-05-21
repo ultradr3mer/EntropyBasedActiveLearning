@@ -5,13 +5,16 @@ from torch import nn
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+from classifier import KnnClassifier
+
 res = 32
 x_resolution = res * 2
-y_resolution = res
+y_resolution = res * 2
+model_file_name = 'model_weights.pth'
 
 
 class DeepLearner:
-    def __init__(self):
+    def __init__(self, model_file_name=None):
         device = (
             "cuda"
             if torch.cuda.is_available()
@@ -21,6 +24,8 @@ class DeepLearner:
         )
         print(f"Using {device} device")
         model = NnConv().to(device)
+        if model_file_name is not None:
+            model.load_state_dict(torch.load(model_file_name))
         print(model)
         self.model = model
         self.device = device
@@ -50,12 +55,12 @@ class NnConv(nn.Module):
     def __init__(self):
         super().__init__()
         kernel_size = 9
-        padding = int((kernel_size / 2))
+        padding = int(kernel_size / 2)
         self.conv_stack = nn.Sequential(
             nn.Conv2d(5, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
             nn.ReLU(),
             nn.Conv2d(12, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
-            nn.MaxPool2d(2, 2),
+            # nn.MaxPool2d(2, 2),
             nn.ReLU(),
             nn.Conv2d(12, 1, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
         )
@@ -65,38 +70,30 @@ class NnConv(nn.Module):
         return x
 
 
-class LearnerDataset(Dataset):
-    def __init__(self, data):
-        # if not flattern:
-        #     x = np.array([np.array(d[0]).reshape(-1) for d in data])
-        #     y = np.array([np.array(d[1]).reshape(-1) for d in data])
-        # else:
-        x = np.array([np.concatenate((d[0], d[2][:2]),0) for d in data])
-        # x = np.array([d[0] for d in data])
-        y = np.array([[d[1]] for d in data])
-
-        self.x = torch.tensor(x, dtype=torch.float)
-        self.y = torch.tensor(y, dtype=torch.float)
-
-        # self.transform = transforms.Compose([transforms.RandomAffine(degrees=0,
-        #                                                              translate=(0.1, 0.1),
-        #                                                              scale=(0.8, 1.2)),
-        #                                      transforms.RandomHorizontalFlip(p=0.5),
-        #                                      transforms.RandomVerticalFlip(p=0.5)])
-        # img = self.x[1]
-        # cv2.imwrite("testa.png", img[2].numpy() * 2**8)
-        # img = self.transform(img)
-        # cv2.imwrite("testb.png", img[2].numpy() * 2**8)
-
-    def __len__(self):
-        return len(self.x)
-
-    def __getitem__(self, idx):
-        sample = self.x[idx]
-        return sample, self.y[idx]
-
-
 if __name__ == '__main__':
-    from deepTraining import DeepTrainer
-    t = DeepTrainer()
-    t.train()
+    from generator import Generator
+    from pointManager import PointManager
+
+    # from deepTraining import DeepTrainer
+    # t = DeepTrainer()
+    # t.train()
+    learner = DeepLearner(model_file_name)
+    gen = Generator()
+    dataset = gen.load_or_create_dataset()
+
+    item = dataset[0]
+    pmgr = PointManager(item)
+    prior = pmgr.calc_prior()
+    x = np.stack((pmgr.map_unlabeled, pmgr.map_label_0, pmgr.map_label_1, cv2.split(prior)[0]))
+    pred = learner.model(x)
+
+    my_points = pmgr.remaining_x[np.where(pmgr.remaining_y == 0)]
+    point_bins = pmgr.point_bins(my_points)
+    top_pred = list(enumerate(pred.reshape(-1)))
+    top_pred.sort(key=lambda x: x[1], reverse=True)
+    top_idx = np.array([i for i, y in top_pred])
+    top_points = np.array([point_bins[i][0] for i in top_idx])[:10]
+
+    acc = pmgr.calc_acc(np.hstack(pmgr.initial_x, top_points), pmgr.initial_y)
+
+    new_acc = [pmgr.po]
