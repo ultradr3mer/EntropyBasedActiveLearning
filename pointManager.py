@@ -14,8 +14,8 @@ data_range = 20
 
 
 class PointManager:
-    def __init__(self, item=None):
-        self.clf = KnnClassifier(2, 3)
+    def __init__(self, item=None, labeled_i=None):
+        self.clf = KnnClassifier(1, 3)
         self.rnd = Random('dfg43')
         if item is None:
             return
@@ -24,7 +24,12 @@ class PointManager:
         self.all_x = np.array(self.all_x)
         self.all_y = np.array(self.all_y)
         self.classes = np.array(range(2))
-        self.labeled_i = self.means_set(self.all_x, random.randint(5, 20))
+
+        if labeled_i is not None:
+            self.labeled_i = labeled_i
+        else:
+            self.labeled_i = self.means_set(self.all_x, random.randint(5, 20))
+
         self.remaining_x = np.array([x for i, x in enumerate(self.all_x) if i not in self.labeled_i])
         self.remaining_y = np.array([y for i, y in enumerate(self.all_y) if i not in self.labeled_i])
         self.initial_x = np.array(self.all_x[self.labeled_i])
@@ -61,27 +66,19 @@ class PointManager:
         H = np.log(H + 1)
         return H.T
 
-    def claims_for_point(self, p):
-        claimed = self.calc_claimed(np.concatenate((self.initial_x, [p])),
-                                    np.concatenate((self.initial_y, [0])),
-                                    self.all_x,
-                                    self.all_y)
-        return claimed
-
     def acc_for_point(self, p):
-        acc = self.calc_acc(np.concatenate((self.initial_x, [p])),
-                            np.concatenate((self.initial_y, [0])),
-                            self.all_x,
-                            self.all_y)
+        acc = self.calc_acc_0(np.concatenate((self.initial_x, [p])),
+                              np.concatenate((self.initial_y, [0])))
         return acc
 
-    def calc_acc(self, x, y):
-        self.clf.fit(x, y)
-        return self.clf.prediction_acc(self.all_x, self.all_y)
+    def calc_acc_0(self, x_train, y_train):
+        self.clf.fit(x_train, y_train)
+        indices_class0 = np.where(self.all_y == 0)
+        return self.clf.prediction_acc(self.all_x[indices_class0], self.all_y[indices_class0])
 
-    def calc_claimed(self, train_x, train_y, valid_x, valid_y):
-        self.clf.fit(train_x, train_y)
-        return [self.clf.prediction_acc(valid_x[np.where(valid_y == c)], valid_y[np.where(valid_y == c)]) for c in self.classes]
+    def calc_acc(self):
+        self.clf.fit(self.initial_x, self.initial_y)
+        return self.clf.prediction_acc(self.all_x, self.all_y)
 
     def calc_prior(self):
         self.clf.fit(self.initial_x, self.initial_y)

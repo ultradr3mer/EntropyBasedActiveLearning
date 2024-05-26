@@ -71,7 +71,7 @@ class DeepTrainer(object):
         optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
 
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.2)
-        epochs = 100
+        epochs = 50
         for t in range(epochs):
             print(f"Epoch {t + 1}\n-------------------------------")
             scheduler.step(t)
@@ -106,8 +106,6 @@ class DeepTrainer(object):
 
     def setup_dataloader(self, data):
         data_full = list([self.gen.load_or_gen_train_data(item, i) for i, item in data])
-        # for i in range(len(data_full)):
-        #     self.gen.sainty_check(data[0][1], data_full[0][1][2])
         my_dataset = LearnerDataset(data_full)
         return DataLoader(my_dataset, batch_size=32, shuffle=True)
 

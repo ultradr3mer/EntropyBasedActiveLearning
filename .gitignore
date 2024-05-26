@@ -240,3 +240,5 @@ fabric.properties
 /dataset.json
 /data3
 /result
+/data3b
+/model_weights.pth

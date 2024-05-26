@@ -13,11 +13,14 @@ from classifier import KnnClassifier
 from deepLearner import x_resolution, y_resolution
 import plotFunctions
 from pointManager import PointManager
+from util import normalize
 
 res = x_resolution
 blob_count = 12
 dataset_filename = 'dataset.json'
 uint16_max = 2 ** 16 - 1
+acc_sum = 0
+acc2_sum = 0
 
 
 class Generator:
@@ -78,87 +81,33 @@ class Generator:
                 f.write(json_string)
             return data_set
 
-    def sainty_check(self, item, y):
-        pmgr = PointManager(item)
-
-        initial_acc = pmgr.calc_claimed(pmgr.initial_x, pmgr.initial_y, pmgr.all_x, pmgr.all_y)
-
-        point_coords = pmgr.gen_point_coords(res)
-
-        point_bins = [b for row in pmgr.bin(1, pmgr.remaining_x[np.where(pmgr.remaining_y == 0)])
-                      for b in pmgr.bin(0, row)]
-        top_y = list(enumerate(y.reshape(-1)))
-        top_y.sort(key=lambda x: x[1], reverse=True)
-        top_idx = np.array([i for i, y in top_y])
-        top_points = np.array([p for i in top_idx for p in point_bins[i]])[:20]
-
-        acc = sum([np.array(pmgr.claims_for_point(p)[0]) - initial_acc[0] for p in top_points]) / 20
-
-        rnd_points = np.array(pmgr.remaining_x[np.where(pmgr.remaining_y == 0)])
-        acc2 = sum([np.array(pmgr.claims_for_point(p)[0]) - initial_acc[0] for p in rnd_points]) / len(rnd_points)
-        print(f"{acc} / {acc2}")
 
     def gen_training_histogram(self, item):
         pmgr = PointManager(item)
 
         x = np.dstack((pmgr.map_unlabeled, pmgr.map_label_0, pmgr.map_label_1))
-        x = self.normalize(x)
-
-        prior = np.concatenate((pmgr.calc_prior(),
-                                np.zeros((res, res, 1))),
-                               axis=2)
+        x = normalize(x)
 
         discovery_map = pmgr.histogram_class([pmgr.all_x[i] for i in pmgr.means_set(pmgr.all_x, 80)]).reshape(-1)
 
         map_unlabeled_flat = pmgr.map_unlabeled.reshape(-1)
         discovery_points = np.array([i for i, coord in enumerate(pmgr.point_coords) if map_unlabeled_flat[i] > 0])
-        current_points = np.array([i for i in discovery_points if discovery_map[i] > 0.0])
-        current_claims = np.array([pmgr.claims_for_point(pmgr.point_coords[i]) for i in current_points]).reshape(-1, 2)
+        map_points = np.array([i for i in discovery_points if discovery_map[i] > 0.0])
+        map_acc = np.array([pmgr.acc_for_point(pmgr.point_coords[i]) for i in map_points])
         remaining_points = [i for i in discovery_points if discovery_map[i] == 0.0]
 
         discovery_hotmap = KnnClassifier(1, 3)
+        discovery_hotmap.fit([pmgr.point_coords[i] for i in map_points],
+                             [1.0 - c for c in map_acc])
+        y_points = pmgr.gen_point_coords(y_resolution)
+        y = discovery_hotmap.predict(y_points).reshape(y_resolution, y_resolution)
+        y = normalize(y)
 
-        # for i in range(4):
-        #     if len(remaining_points) < 10:
-        #         return
-        #
-        #     discovery_hotmap.fit([pmgr.point_coords[i] for i in current_points],
-        #                          [1.0 - np.average(c, weights=[1.0, 1.0]) for c in current_claims])
-        #     weights = self.normalize(discovery_hotmap.predict([pmgr.point_coords[i]
-        #                                                        for i in
-        #                                                        remaining_points])) + 0.1
-        #     if math.isnan(sum(weights)):
-        #         weights = np.ones(len(weights))
-        #
-        #     additional_points = self.rnd.choices(remaining_points,
-        #                                          weights=weights,
-        #                                          k=10)
-        #     current_points = np.concatenate((current_points, additional_points))
-        #     new_claims = np.array([pmgr.claims_for_point(pmgr.point_coords[i]) for i in additional_points]).reshape(-1, 2)
-        #     current_claims = np.concatenate((current_claims, new_claims))
-        #     remaining_points = [i for i in remaining_points if i not in current_points]
+        p = pmgr.calc_prior()
 
-        def draw_hotmap(weights):
-            discovery_hotmap.fit([pmgr.point_coords[i] for i in current_points],
-                                 [1.0 - np.average(c, weights=weights) for c in current_claims])
-            y_points = pmgr.gen_point_coords(y_resolution)
-            y = discovery_hotmap.predict(y_points).reshape(y_resolution, y_resolution)
-            y = self.normalize(y)
-            return y
+        return x, y, p
 
-        y_1 = draw_hotmap([1.0, 0.0])
-        y_2 = draw_hotmap([0.0, 1.0])
-        y_3 = draw_hotmap([len(np.where(pmgr.all_y == 0)[0]), len(np.where(pmgr.all_y == 1)[0])])
-        y = np.dstack((y_1, y_2, y_3))
 
-        return x, y, prior
-
-    def normalize(self, x):
-        x = x - np.min(x)
-        max = np.max(x)
-        if max != 0:
-            x = x / max
-        return x
 
     def save_as_image(self, x, filename):
         image = cv2.cvtColor(np.array(x * uint16_max, dtype='uint16'), cv2.CV_16U)
@@ -178,8 +127,8 @@ class Generator:
         p_filename = f'{folder}/{number}_p.png'
         try:
             x = self.load_from_image(x_filename)[:3]
-            y = self.load_from_image(y_filename)[:3]
-            p = self.load_from_image(p_filename)[1:3]
+            y = self.load_from_image(y_filename)[0]
+            p = self.load_from_image(p_filename)[0]
             return x, y, p
         except FileNotFoundError:
             x, y, p = self.gen_training_histogram(dataset)
@@ -190,7 +139,40 @@ class Generator:
 
 
 if __name__ == '__main__':
-    from deepTraining import DeepTrainer
+    import numpy as np
+    from mpi4py import MPI
+    import logging
 
-    t = DeepTrainer()
-    t.train()
+    logging.basicConfig(format='%(name)s: %(message)s ')
+    comm = MPI.COMM_WORLD
+    my_rank = comm.Get_rank()
+    rank_count = comm.Get_size()
+    logger = logging.getLogger(str(my_rank))
+    logger.level = logging.INFO
+    logger.info(f" MPI : rank {my_rank} / {rank_count}")
+
+    gen = Generator()
+
+    if my_rank == 0:
+        whole_dataset = gen.load_or_create_dataset()
+        indices = np.array(range(len(whole_dataset)))
+        msg_list = np.array_split(indices, rank_count)
+    else:
+        whole_dataset = None
+        msg_list = []
+
+    msg = comm.scatter(msg_list, root=0)
+
+    if whole_dataset is None:
+        whole_dataset = gen.load_or_create_dataset()
+
+    for i in msg:
+        item = whole_dataset[i]
+        gen.load_or_gen_train_data(item, i)
+
+    logger.info(f" MPI Completed: rank {my_rank} / {rank_count}")
+    #
+    # from deepTraining import DeepTrainer
+    #
+    # t = DeepTrainer()
+    # t.train()

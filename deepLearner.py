@@ -1,3 +1,5 @@
+from random import Random
+
 import cv2
 import numpy as np
 import torch
@@ -6,6 +8,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 
 from classifier import KnnClassifier
+from util import normalize
 
 res = 32
 x_resolution = res * 2
@@ -29,6 +32,62 @@ class DeepLearner:
         print(model)
         self.model = model
         self.device = device
+        self.rnd = Random('sdikjgfh')
+
+    def pick(self, item):
+        pmgr = PointManager(item)
+
+        initial_acc = pmgr.calc_acc()
+
+        k = 10
+        points_with_index = np.concatenate((pmgr.all_x,
+                                            np.array(range(len(pmgr.all_x))).reshape((len(pmgr.all_x), 1))),
+                                            axis=1)
+        bins = pmgr.point_bins(points_with_index)
+        pred = self.predict(pmgr, False)
+        i_0 = self.pick_from_pred(bins, pred, k)
+        pred = self.predict(pmgr, True)
+        i_1 = self.pick_from_pred(bins, pred, k)
+        pick_i = set(i_0) | set(i_1)
+        all_i = np.array(list(set(pmgr.labeled_i.flatten()) | pick_i), dtype=int)
+
+        pmgr_new = PointManager(item, all_i)
+
+        new_acc = pmgr_new.calc_acc()
+
+        top_points = self.rnd.choices([p for b in bins for p in b],
+                                    k=k)
+        i_rnd = np.array(top_points, dtype=int)[:, 2]
+        rnd_i = np.array(list(set(pmgr.labeled_i.flatten()) | set(i_rnd)), dtype=int)
+        pmgr_rnd = PointManager(item, rnd_i)
+        rnd_acc = pmgr_rnd.calc_acc()
+
+        print(f"{new_acc-initial_acc} / {rnd_acc-initial_acc} - {new_acc-initial_acc > rnd_acc-initial_acc}")
+        pass
+
+    def pick_from_pred(self, bins, pred, k):
+        pred = np.power(normalize(pred.reshape(-1)), 4)
+        top_points = self.rnd.choices([p for b in bins for p in b],
+                                    weights=[pred[i] for i, b in enumerate(bins) for _ in b],
+                                    k=k)
+        return np.array(top_points, dtype=int)[:, 2]
+
+    def predict(self, pmgr, flip):
+        prior = pmgr.calc_prior().reshape(64, 64)
+
+        if flip:
+            prior = 1.0 - prior
+            tmp = pmgr.map_label_0
+            pmgr.map_label_0 = pmgr.map_label_1
+            pmgr.map_label_1 = tmp
+
+        x = np.array([np.stack((pmgr.map_unlabeled,
+                                pmgr.map_label_0,
+                                pmgr.map_label_1,
+                                prior - 0.5))])
+        x = torch.tensor(x, dtype=torch.float).to(learner.device)
+        pred = learner.model(x)
+        return pred.detach().cpu().numpy()
 
 
 class NnFully(nn.Module):
@@ -57,7 +116,7 @@ class NnConv(nn.Module):
         kernel_size = 9
         padding = int(kernel_size / 2)
         self.conv_stack = nn.Sequential(
-            nn.Conv2d(5, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
+            nn.Conv2d(4, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
             nn.ReLU(),
             nn.Conv2d(12, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
             # nn.MaxPool2d(2, 2),
@@ -81,19 +140,6 @@ if __name__ == '__main__':
     gen = Generator()
     dataset = gen.load_or_create_dataset()
 
-    item = dataset[0]
-    pmgr = PointManager(item)
-    prior = pmgr.calc_prior()
-    x = np.stack((pmgr.map_unlabeled, pmgr.map_label_0, pmgr.map_label_1, cv2.split(prior)[0]))
-    pred = learner.model(x)
+    for item in dataset:
+        learner.pick(item)
 
-    my_points = pmgr.remaining_x[np.where(pmgr.remaining_y == 0)]
-    point_bins = pmgr.point_bins(my_points)
-    top_pred = list(enumerate(pred.reshape(-1)))
-    top_pred.sort(key=lambda x: x[1], reverse=True)
-    top_idx = np.array([i for i, y in top_pred])
-    top_points = np.array([point_bins[i][0] for i in top_idx])[:10]
-
-    acc = pmgr.calc_acc(np.hstack(pmgr.initial_x, top_points), pmgr.initial_y)
-
-    new_acc = [pmgr.po]
