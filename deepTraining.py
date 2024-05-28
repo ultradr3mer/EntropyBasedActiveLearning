@@ -10,11 +10,12 @@ from deepLearner import DeepLearner, model_file_name
 from generator import Generator
 from learnerDataset import LearnerDataset
 import plotFunctions
-
+from util import normalize
+from logger import instance as logger
 
 class DeepTrainer(object):
-    def __init__(self):
-        self.gen = Generator()
+    def __init__(self, folder):
+        self.gen = Generator(folder)
         self.data_set = self.gen.load_or_create_dataset()
         self.counter = 0
         self.random = random.Random('sidjhf')
@@ -39,7 +40,7 @@ class DeepTrainer(object):
 
             if batch % 100 == 0:
                 loss, current = loss.item(), (batch + 1) * len(X)
-                print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+                logger.info(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
     def test(self, dataloader, model, loss_fn):
         device = self.learner.device
@@ -53,7 +54,7 @@ class DeepTrainer(object):
                 pred = model(X)
                 test_loss += loss_fn(pred, y).item()
         test_loss /= num_batches
-        print(f"Test Error: Avg loss: {test_loss:>8f} \n")
+        logger.info(f"Test Error: Avg loss: {test_loss:>8f} \n")
 
     def train(self):
         model = self.learner.model
@@ -63,28 +64,28 @@ class DeepTrainer(object):
         test_dataloader = self.setup_dataloader(test)
 
         for X, y in test_dataloader:
-            print(f"Shape of X [N, C, H, W]: {X.shape}")
-            print(f"Shape of y: {y.shape} {y.dtype}")
+            logger.info(f"Shape of X [N, C, H, W]: {X.shape}")
+            logger.info(f"Shape of y: {y.shape} {y.dtype}")
             break
 
         loss_fn = nn.MSELoss()
         optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
 
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.2)
-        epochs = 50
+        epochs = 100
         for t in range(epochs):
-            print(f"Epoch {t + 1}\n-------------------------------")
+            logger.info(f"Epoch {t + 1}\n-------------------------------")
             scheduler.step(t)
             self.train_step(train_dataloader, model, loss_fn, optimizer)
             self.test(test_dataloader, model, loss_fn)
-        print("Done!")
+        logger.info("Done!")
 
         torch.save(model.state_dict(), model_file_name)
 
         def create_image(d):
-            r = self.gen.normalize(d[0])
-            g = self.gen.normalize(d[1])
-            b = self.gen.normalize(d[2])
+            r = normalize(d[0])
+            g = normalize(d[1])
+            b = normalize(d[2])
             return np.dstack((r,g,b))
 
         i_pred = 0
@@ -95,10 +96,10 @@ class DeepTrainer(object):
                 X, y = X.to(self.learner.device), y
                 pred = model(X)
                 for p in pred:
-                    self.gen.save_as_image(self.gen.normalize(p.cpu().numpy()[0]), f'result/{i_pred}_pred.png')
+                    self.gen.save_as_image(normalize(p.cpu().numpy()[0]), f'result/{i_pred}_pred.png')
                     i_pred += 1
                 for item in y:
-                    self.gen.save_as_image(self.gen.normalize(item.cpu().numpy()[0]), f'result/{i_actual}_actual.png')
+                    self.gen.save_as_image(normalize(item.cpu().numpy()[0]), f'result/{i_actual}_actual.png')
                     i_actual += 1
                 for item in X:
                     self.gen.save_as_image(create_image(item.cpu().numpy()), f'result/{i_x}_x.png')
@@ -111,5 +112,5 @@ class DeepTrainer(object):
 
 
 if __name__ == '__main__':
-    trainer = DeepTrainer()
+    trainer = DeepTrainer('data')
     trainer.train()

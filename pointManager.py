@@ -7,11 +7,9 @@ from scipy.ndimage import gaussian_filter
 from sklearn.cluster import KMeans
 
 from classifier import KnnClassifier
-from deepLearner import x_resolution
 
-res = x_resolution
 data_range = 20
-
+res = 64
 
 class PointManager:
     def __init__(self, item=None, labeled_i=None):
@@ -67,14 +65,15 @@ class PointManager:
         return H.T
 
     def acc_for_point(self, p):
-        acc = self.calc_acc_0(np.concatenate((self.initial_x, [p])),
-                              np.concatenate((self.initial_y, [0])))
-        return acc
+        acc0 = self.calc_acc_for(np.concatenate((self.initial_x, [p])),
+                                 np.concatenate((self.initial_y, [0])))
+        acc1 = self.calc_acc_for(np.concatenate((self.initial_x, [p])),
+                                 np.concatenate((self.initial_y, [1])))
+        return [acc0, acc1]
 
-    def calc_acc_0(self, x_train, y_train):
+    def calc_acc_for(self, x_train, y_train):
         self.clf.fit(x_train, y_train)
-        indices_class0 = np.where(self.all_y == 0)
-        return self.clf.prediction_acc(self.all_x[indices_class0], self.all_y[indices_class0])
+        return self.clf.prediction_acc(self.all_x, self.all_y)
 
     def calc_acc(self):
         self.clf.fit(self.initial_x, self.initial_y)
@@ -98,5 +97,5 @@ class PointManager:
         return bins
 
     def point_bins(self, points):
-        return [b for row in self.bin(1, points)
+        return [np.array(b) for row in self.bin(1, points)
                 for b in self.bin(0, row)]

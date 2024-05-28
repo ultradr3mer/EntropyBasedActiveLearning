@@ -9,15 +9,22 @@ from torchvision import transforms
 
 from classifier import KnnClassifier
 from util import normalize
+from pointManager import PointManager
+import torch.nn.functional as F
 
-res = 32
-x_resolution = res * 2
-y_resolution = res * 2
+x_resolution = 64
+y_resolution = 64
+
 model_file_name = 'model_weights.pth'
 
+count_success = 0
+count_total = 0
+
+from logger import instance as logger
 
 class DeepLearner:
     def __init__(self, model_file_name=None):
+        
         device = (
             "cuda"
             if torch.cuda.is_available()
@@ -25,11 +32,11 @@ class DeepLearner:
             if torch.backends.mps.is_available()
             else "cpu"
         )
-        print(f"Using {device} device")
+        logger.info(f"Using {device} device")
         model = NnConv().to(device)
         if model_file_name is not None:
             model.load_state_dict(torch.load(model_file_name))
-        print(model)
+        logger.info(model)
         self.model = model
         self.device = device
         self.rnd = Random('sdikjgfh')
@@ -37,9 +44,8 @@ class DeepLearner:
     def pick(self, item):
         pmgr = PointManager(item)
 
-        initial_acc = pmgr.calc_acc()
 
-        k = 10
+        k = 1
         points_with_index = np.concatenate((pmgr.all_x,
                                             np.array(range(len(pmgr.all_x))).reshape((len(pmgr.all_x), 1))),
                                             axis=1)
@@ -51,26 +57,39 @@ class DeepLearner:
         pick_i = set(i_0) | set(i_1)
         all_i = np.array(list(set(pmgr.labeled_i.flatten()) | pick_i), dtype=int)
 
+        initial_acc = pmgr.calc_acc()
+
         pmgr_new = PointManager(item, all_i)
 
         new_acc = pmgr_new.calc_acc()
 
-        top_points = self.rnd.choices([p for b in bins for p in b],
-                                    k=k)
-        i_rnd = np.array(top_points, dtype=int)[:, 2]
+        rnd_points = self.rnd.choices([p for b in bins for p in b],
+                                    k=k*2)
+        i_rnd = np.array(rnd_points, dtype=int)[:, 2]
         rnd_i = np.array(list(set(pmgr.labeled_i.flatten()) | set(i_rnd)), dtype=int)
         pmgr_rnd = PointManager(item, rnd_i)
         rnd_acc = pmgr_rnd.calc_acc()
 
-        print(f"{new_acc-initial_acc} / {rnd_acc-initial_acc} - {new_acc-initial_acc > rnd_acc-initial_acc}")
-        pass
+        success = new_acc-initial_acc > rnd_acc-initial_acc
+
+        global count_success
+        global count_total
+        count_total += 1
+        if success:
+            count_success += 1
+
+        return all_i, success
 
     def pick_from_pred(self, bins, pred, k):
-        pred = np.power(normalize(pred.reshape(-1)), 4)
-        top_points = self.rnd.choices([p for b in bins for p in b],
-                                    weights=[pred[i] for i, b in enumerate(bins) for _ in b],
-                                    k=k)
-        return np.array(top_points, dtype=int)[:, 2]
+        not_empty_i = [i for i, b in enumerate(bins) if len(b) > 0]
+        not_empty_b = [bins[i] for i in not_empty_i]
+        i = np.argmax(pred.reshape(-1)[not_empty_i])
+        return np.array(self.rnd.choices(not_empty_b[i], k=k), dtype=int)[:, 2]
+        # pred = np.power(normalize(pred.reshape(-1)), 4)
+        # top_points = self.rnd.choices([p for b in bins for p in b],
+        #                             weights=[pred[i] for i, b in enumerate(bins) for _ in b],
+        #                             k=k)
+        # return np.array(top_points, dtype=int)[:, 2]
 
     def predict(self, pmgr, flip):
         prior = pmgr.calc_prior().reshape(64, 64)
@@ -85,8 +104,8 @@ class DeepLearner:
                                 pmgr.map_label_0,
                                 pmgr.map_label_1,
                                 prior - 0.5))])
-        x = torch.tensor(x, dtype=torch.float).to(learner.device)
-        pred = learner.model(x)
+        x = torch.tensor(x, dtype=torch.float).to(self.device)
+        pred = self.model(x)
         return pred.detach().cpu().numpy()
 
 
@@ -113,15 +132,16 @@ class NnFully(nn.Module):
 class NnConv(nn.Module):
     def __init__(self):
         super().__init__()
-        kernel_size = 9
+        kernel_size = 13
         padding = int(kernel_size / 2)
         self.conv_stack = nn.Sequential(
             nn.Conv2d(4, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
             nn.ReLU(),
-            nn.Conv2d(12, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
-            # nn.MaxPool2d(2, 2),
+            nn.Conv2d(12, 6, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
             nn.ReLU(),
-            nn.Conv2d(12, 1, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
+            nn.Conv2d(6, 6, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
+            nn.ReLU(),
+            nn.Conv2d(6, 1, kernel_size=kernel_size, padding=padding, padding_mode='replicate')
         )
 
     def forward(self, x):
@@ -137,7 +157,7 @@ if __name__ == '__main__':
     # t = DeepTrainer()
     # t.train()
     learner = DeepLearner(model_file_name)
-    gen = Generator()
+    gen = Generator('data')
     dataset = gen.load_or_create_dataset()
 
     for item in dataset:

@@ -1,5 +1,6 @@
 import json
 import math
+import os.path
 import random
 
 import cv2
@@ -10,13 +11,13 @@ from sklearn.datasets import make_blobs
 from sklearn.ensemble import RandomForestClassifier
 
 from classifier import KnnClassifier
-from deepLearner import x_resolution, y_resolution
+from deepLearner import x_resolution, y_resolution, DeepLearner, model_file_name
 import plotFunctions
 from pointManager import PointManager
-from util import normalize
+from util import normalize, if_then_else
 
 res = x_resolution
-blob_count = 12
+blob_count = 24
 dataset_filename = 'dataset.json'
 uint16_max = 2 ** 16 - 1
 acc_sum = 0
@@ -24,17 +25,18 @@ acc2_sum = 0
 
 
 class Generator:
-    def __init__(self):
+    def __init__(self, folder):
         self.rnd = random.Random('dfg43')
         self.clf = KnnClassifier(2, 3)
         self.classes = list(range(2))
+        self.folder = folder
 
     def generate(self):
         center_list = []
         std_list = []
         for i in range(blob_count):
             next_center = [self.rnd_float(-18, 18), self.rnd_float(-18, 18)]
-            next_std = self.rnd_float(3, 5)
+            next_std = self.rnd_float(1, 3)
             if any([1 for c, std in zip(center_list, std_list)
                     if np.linalg.norm(np.array(c) - np.array(next_center)) < (next_std + std)]):
                 continue
@@ -81,7 +83,6 @@ class Generator:
                 f.write(json_string)
             return data_set
 
-
     def gen_training_histogram(self, item):
         pmgr = PointManager(item)
 
@@ -92,9 +93,13 @@ class Generator:
 
         map_unlabeled_flat = pmgr.map_unlabeled.reshape(-1)
         discovery_points = np.array([i for i, coord in enumerate(pmgr.point_coords) if map_unlabeled_flat[i] > 0])
+        points_with_class = np.concatenate((pmgr.remaining_x, pmgr.remaining_y.reshape(-1, 1)), axis=1)
+        probs = [[len([1 for p in b if p[2] == 0]), len([1 for p in b if p[2] == 1])]
+                 for b in pmgr.point_bins(points_with_class)]
+        probs = [if_then_else(sum(p) == 0, [1, 1], p) for p in probs]
         map_points = np.array([i for i in discovery_points if discovery_map[i] > 0.0])
-        map_acc = np.array([pmgr.acc_for_point(pmgr.point_coords[i]) for i in map_points])
-        remaining_points = [i for i in discovery_points if discovery_map[i] == 0.0]
+        map_acc = np.array([np.average(pmgr.acc_for_point(pmgr.point_coords[i]), weights=probs[i]) for i in map_points])
+        # remaining_points = [i for i in discovery_points if discovery_map[i] == 0.0]
 
         discovery_hotmap = KnnClassifier(1, 3)
         discovery_hotmap.fit([pmgr.point_coords[i] for i in map_points],
@@ -106,8 +111,6 @@ class Generator:
         p = pmgr.calc_prior()
 
         return x, y, p
-
-
 
     def save_as_image(self, x, filename):
         image = cv2.cvtColor(np.array(x * uint16_max, dtype='uint16'), cv2.CV_16U)
@@ -121,10 +124,9 @@ class Generator:
         return np.array(cv2.split(img), dtype=float) / uint16_max
 
     def load_or_gen_train_data(self, dataset, number):
-        folder = 'data3'
-        x_filename = f'{folder}/{number}_x.png'
-        y_filename = f'{folder}/{number}_y.png'
-        p_filename = f'{folder}/{number}_p.png'
+        x_filename = f'{self.folder}/{number}_x.png'
+        y_filename = f'{self.folder}/{number}_y.png'
+        p_filename = f'{self.folder}/{number}_p.png'
         try:
             x = self.load_from_image(x_filename)[:3]
             y = self.load_from_image(y_filename)[0]
@@ -151,7 +153,7 @@ if __name__ == '__main__':
     logger.level = logging.INFO
     logger.info(f" MPI : rank {my_rank} / {rank_count}")
 
-    gen = Generator()
+    gen = Generator('data')
 
     if my_rank == 0:
         whole_dataset = gen.load_or_create_dataset()
@@ -170,7 +172,39 @@ if __name__ == '__main__':
         item = whole_dataset[i]
         gen.load_or_gen_train_data(item, i)
 
-    logger.info(f" MPI Completed: rank {my_rank} / {rank_count}")
+    logger.info(f" MPI Completed generatrion: rank {my_rank} / {rank_count}")
+
+    if not os.path.exists(model_file_name):
+        from deepTraining import DeepTrainer
+
+        if my_rank == 0:
+            trainer = DeepTrainer('data')
+            trainer.train()
+
+    msg = comm.scatter(msg_list, root=0)
+    learner = DeepLearner(model_file_name)
+
+    pick_count = 0
+    pick_success = 0
+
+    for nr, i in enumerate(msg):
+        item = whole_dataset[i]
+        picked, success = learner.pick(item)
+
+        pick_count += 1
+        if success:
+            pick_success += 1
+
+        if nr % 10 == 0:
+            logger.info(f" {int(nr/len(msg)*100)}% current rate {pick_success / pick_count}")
+
+    logger.info(f" MPI Completed Pick: rank {my_rank} / {rank_count} - {pick_success / pick_count}")
+
+    all_pick = comm.reduce(pick_success / pick_count, op=MPI.SUM)
+
+    if all_pick is not None:
+        logger.info(f" MPI Completed Pick: {all_pick / rank_count}")
+
     #
     # from deepTraining import DeepTrainer
     #
