@@ -91,7 +91,7 @@ class DeepLearner:
 
     def pick_cluster(self, bins, pred, k, pmgr):
         pred = pred.reshape(x_res, x_res)
-        pred_sharp = pred # - gaussian_filter(pred, sigma=10)
+        pred_sharp = pred - gaussian_filter(pred, sigma=10)
         # possible_centers_indices = [i for i, b in enumerate(bins)
         #                             if len(b) > 0]
         possible_centers = np.array([if_then_else(len(b) > 0, 1, 0) for i, b in enumerate(bins)])
@@ -99,7 +99,7 @@ class DeepLearner:
         map = [(x, y)
                for y, row in enumerate(normalize(pred_sharp))
                for x, cell in enumerate(row)
-               if cell > (0.9 - self.rnd.random() / 2)]
+               if cell > (0.9 - self.rnd.random() / 4)]
         centeroids = pmgr.means_set(map, k)  # possible_centers)
         return np.array([self.rnd.choice(bins[map[c][0]+map[c][1]*x_res])[2] for c in centeroids], dtype=int)
 

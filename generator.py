@@ -198,7 +198,12 @@ if __name__ == '__main__':
             pick_success += 1
 
         if nr % 10 == 0:
-            logger.info(f" {int(nr/len(msg)*100)}% current rate {pick_success / pick_count}")
+            all_pick = comm.reduce(pick_success / pick_count, op=MPI.SUM)
+
+            if all_pick is not None:
+                logger.info(f" {int(nr/len(msg)*100)}% current rate: {all_pick / rank_count}")
+
+            # logger.info(f" {int(nr/len(msg)*100)}% current rate {pick_success / pick_count}")
 
     logger.info(f" MPI Completed Pick: rank {my_rank} / {rank_count} - {pick_success / pick_count}")
 
