@@ -11,12 +11,12 @@ from sklearn.datasets import make_blobs
 from sklearn.ensemble import RandomForestClassifier
 
 from classifier import KnnClassifier
-from deepLearner import x_resolution, y_resolution, DeepLearner, model_file_name
+from deepLearner import x_res, y_res, DeepLearner, model_file_name
 import plotFunctions
 from pointManager import PointManager
 from util import normalize, if_then_else
 
-res = x_resolution
+res = x_res
 blob_count = 24
 dataset_filename = 'dataset.json'
 uint16_max = 2 ** 16 - 1
@@ -104,8 +104,8 @@ class Generator:
         discovery_hotmap = KnnClassifier(1, 3)
         discovery_hotmap.fit([pmgr.point_coords[i] for i in map_points],
                              [1.0 - c for c in map_acc])
-        y_points = pmgr.gen_point_coords(y_resolution)
-        y = discovery_hotmap.predict(y_points).reshape(y_resolution, y_resolution)
+        y_points = pmgr.gen_point_coords(y_res)
+        y = discovery_hotmap.predict(y_points).reshape(y_res, y_res)
         y = normalize(y)
 
         p = pmgr.calc_prior()
@@ -186,6 +186,8 @@ if __name__ == '__main__':
 
     pick_count = 0
     pick_success = 0
+
+    # msg = msg[:50]
 
     for nr, i in enumerate(msg):
         item = whole_dataset[i]

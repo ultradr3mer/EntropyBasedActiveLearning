@@ -40,11 +40,18 @@ class PointManager:
             self.initial_x[np.where(self.initial_y == 1)]), sigma=2)
         self.map_unlabeled = gaussian_filter(self.histogram_class(self.remaining_x), sigma=2)
 
-    def means_set(self, x, n):
+    def means_set(self, x, n, possible_centers=None):
+        if possible_centers is None:
+            possible_centers = x
+
+        if len(x) <= n:
+            return np.array([i % len(x) for i in range(n)], dtype=int)
+
         kmeans = KMeans(n_clusters=n, random_state=3456987)
         kmeans.fit(x)
         centroids = kmeans.cluster_centers_
-        indices = np.array([np.argmin([np.linalg.norm(x - c) for i, x in enumerate(x)]) for c in centroids])
+        indices = np.array([np.argmin([np.linalg.norm(x - c)
+                                       for i, x in enumerate(possible_centers)]) for c in centroids])
         return indices
 
     def gen_point_coords(self, res):
@@ -99,3 +106,7 @@ class PointManager:
     def point_bins(self, points):
         return [np.array(b) for row in self.bin(1, points)
                 for b in self.bin(0, row)]
+
+    def point_bins2d(self, points):
+        return [[np.array(b) for b in self.bin(0, row)]
+                for row in self.bin(1, points)]

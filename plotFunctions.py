@@ -41,15 +41,6 @@ def plot(requested_samples, labeled_x, y):
     plt.figure()
     rainbow = cm.get_cmap('rainbow', 4)
 
-    if requested_samples is not None:
-        plt.scatter(
-            requested_samples[:, 0],
-            requested_samples[:, 1],
-            color="red",
-            alpha=0.5,
-            label="unlabeled"
-        )
-
     unique_classes = np.unique(y)
     colors = cm.magma(np.linspace(0.0, 1.0), unique_classes.size)
     rainbow = cm.get_cmap('rainbow', 4)
@@ -65,6 +56,15 @@ def plot(requested_samples, labeled_x, y):
             alpha=0.5
         )
         plt.title('Data')
+
+    if requested_samples is not None:
+        plt.scatter(
+            requested_samples[:, 0],
+            requested_samples[:, 1],
+            color="red",
+            alpha=0.5,
+            label="unlabeled"
+        )
 
     plt.axis([-20.0, 20.0, -20.0, 20.0])
     plt.title('Data')
