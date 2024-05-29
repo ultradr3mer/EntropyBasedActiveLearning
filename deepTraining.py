@@ -6,7 +6,7 @@ from sklearn.model_selection import train_test_split
 from torch import nn, optim
 from torch.utils.data import DataLoader, Dataset
 
-from deepLearner import DeepLearner, model_file_name
+from deepLearner import DeepLearner
 from generator import Generator
 from learnerDataset import LearnerDataset
 import plotFunctions
@@ -15,6 +15,7 @@ from logger import instance as logger
 
 class DeepTrainer(object):
     def __init__(self, folder):
+        self.folder = folder
         self.gen = Generator(folder)
         self.data_set = self.gen.load_or_create_dataset()
         self.counter = 0
@@ -80,7 +81,7 @@ class DeepTrainer(object):
             self.test(test_dataloader, model, loss_fn)
         logger.info("Done!")
 
-        torch.save(model.state_dict(), model_file_name)
+        torch.save(model.state_dict(), f"{self.folder}/model_weights.pth")
 
         def create_image(d):
             r = normalize(d[0])

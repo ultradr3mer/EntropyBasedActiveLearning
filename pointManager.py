@@ -13,7 +13,7 @@ res = 64
 
 class PointManager:
     def __init__(self, item=None, labeled_i=None):
-        self.clf = KnnClassifier(1, 3)
+        self.clf = KnnClassifier(1, 4)
         self.rnd = Random('dfg43')
         if item is None:
             return

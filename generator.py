@@ -15,6 +15,7 @@ from deepLearner import x_res, y_res, DeepLearner
 import plotFunctions
 from pointManager import PointManager
 from util import normalize, if_then_else
+from logger import instance as logger
 
 res = x_res
 blob_count = 24
@@ -27,7 +28,6 @@ acc2_sum = 0
 class Generator:
     def __init__(self, folder):
         self.rnd = random.Random('dfg43')
-        self.clf = KnnClassifier(2, 3)
         self.classes = list(range(2))
         self.folder = folder
 
@@ -83,8 +83,8 @@ class Generator:
                 f.write(json_string)
             return data_set
 
-    def gen_training_histogram(self, item):
-        pmgr = PointManager(item)
+    def gen_training_histogram(self, item, labeled_i):
+        pmgr = PointManager(item, labeled_i)
 
         x = np.dstack((pmgr.map_unlabeled, pmgr.map_label_0, pmgr.map_label_1))
         x = normalize(x)
@@ -101,7 +101,7 @@ class Generator:
         map_acc = np.array([np.average(pmgr.acc_for_point(pmgr.point_coords[i]), weights=probs[i]) for i in map_points])
         # remaining_points = [i for i in discovery_points if discovery_map[i] == 0.0]
 
-        discovery_hotmap = KnnClassifier(1, 3)
+        discovery_hotmap = KnnClassifier(1, 4)
         discovery_hotmap.fit([pmgr.point_coords[i] for i in map_points],
                              [1.0 - c for c in map_acc])
         y_points = pmgr.gen_point_coords(y_res)
@@ -123,7 +123,7 @@ class Generator:
             raise FileNotFoundError(f"Image with {filename} could not be loaded.")
         return np.array(cv2.split(img), dtype=float) / uint16_max
 
-    def load_or_gen_train_data(self, dataset, number):
+    def load_or_gen_train_data(self, dataset, number, labeled_i=None):
         x_filename = f'{self.folder}/{number}_x.png'
         y_filename = f'{self.folder}/{number}_y.png'
         p_filename = f'{self.folder}/{number}_p.png'
@@ -133,84 +133,177 @@ class Generator:
             p = self.load_from_image(p_filename)[0]
             return x, y, p
         except FileNotFoundError:
-            x, y, p = self.gen_training_histogram(dataset)
+            x, y, p = self.gen_training_histogram(dataset, labeled_i)
             self.save_as_image(x, x_filename)
             self.save_as_image(y, y_filename)
             self.save_as_image(p, p_filename)
             return np.array(cv2.split(x)), np.array(cv2.split(y)), np.array(cv2.split(p)[1:3])
 
 
-if __name__ == '__main__':
-    import numpy as np
-    from mpi4py import MPI
-    import logging
-
-    logging.basicConfig(format='%(name)s: %(message)s ')
-    comm = MPI.COMM_WORLD
-    my_rank = comm.Get_rank()
-    rank_count = comm.Get_size()
-    logger = logging.getLogger(str(my_rank))
-    logger.level = logging.INFO
-    logger.info(f" MPI : rank {my_rank} / {rank_count}")
-
-    gen = Generator('data')
-
-    if my_rank == 0:
-        whole_dataset = gen.load_or_create_dataset()
-        indices = np.array(range(len(whole_dataset)))
-        msg_list = np.array_split(indices, rank_count)
-    else:
-        whole_dataset = None
-        msg_list = []
-
-    msg = comm.scatter(msg_list, root=0)
-
-    if whole_dataset is None:
-        whole_dataset = gen.load_or_create_dataset()
-
-    for i in msg:
-        item = whole_dataset[i]
-        gen.load_or_gen_train_data(item, i)
-
-    logger.info(f" MPI Completed generatrion: rank {my_rank} / {rank_count}")
-
-    if not os.path.exists(model_file_name):
-        from deepTraining import DeepTrainer
-
-        if my_rank == 0:
-            trainer = DeepTrainer('data')
-            trainer.train()
-
-    msg = comm.scatter(msg_list, root=0)
-    learner = DeepLearner(model_file_name)
+def pick_unlabeled(comm, stage_nr, whole_dataset, msg):
+    learner = DeepLearner(f"data{stage_nr - 1}/model_weights.pth")
 
     pick_count = 0
     pick_success = 0
 
     # msg = msg[:50]
 
-    for nr, i in enumerate(msg):
+    step_indices_file_name = f"data{stage_nr}/labeled_indices.json"
+    # combined_picks = None
+    if not os.path.exists(step_indices_file_name):
+        worker_picks = []
+        for nr, i in enumerate(msg):
+            item = whole_dataset[i]
+            picked, success = learner.pick(item)
+            worker_picks.append(picked)
+
+            pick_count += 1
+            if success:
+                pick_success += 1
+
+            if nr % 5 == 0:
+                success_rate = comm.gather(pick_success / pick_count, root=0)
+
+                if success_rate is not None:
+                    logger.info(f" progress  {int(nr / len(msg) * 100)}% success {int(np.average(success_rate) * 100)}%")
+
+        success_rate = comm.gather(pick_success / pick_count, root=0)
+
+        if success_rate is not None:
+            logger.info(f" final success {int(np.average(success_rate) * 100)}%")
+
+        all_picks = comm.gather(worker_picks, root=0)
+
+        if all_picks is not None:
+            combined_picks = [list([int(i) for i in p]) for worker_pick in all_picks for p in worker_pick]
+            json_string = json.dumps(combined_picks)
+            with open(step_indices_file_name, 'w') as f:
+                f.write(json_string)
+            return combined_picks
+        else:
+            return None
+
+    elif comm.rank == 0:
+        with open(f'data{stage_nr}/labeled_indices.json', 'r') as f:
+            data = json.loads(f.read())
+            return data
+
+    return None
+
+
+def get_stage_indices(stage_nr):
+    with open(f'data{stage_nr}/labeled_indices.json', 'r') as f:
+        return json.loads(f.read())
+
+
+def run_stage(stage_nr):
+    from mpi4py import MPI
+    comm = MPI.COMM_WORLD
+    my_rank = comm.Get_rank()
+    rank_count = comm.Get_size()
+
+    stage_dir = f'data{stage_nr}'
+
+    gen = Generator(stage_dir)
+
+    if my_rank == 0:
+        logger.info(f'Starting stage {stage_nr}')
+        logger.info(f'Create dataset')
+        whole_dataset = gen.load_or_create_dataset()
+        indices = np.array(range(len(whole_dataset)))
+        msg_list = np.array_split(indices, rank_count)
+
+        try:
+            os.mkdir(stage_dir)
+        except FileExistsError:
+            pass
+    else:
+        whole_dataset = None
+        msg_list = []
+
+    msg = comm.scatter(msg_list, root=0)
+
+    if stage_nr > 0:
+        if whole_dataset is None:
+            whole_dataset = gen.load_or_create_dataset()
+
+        if my_rank == 0:
+            logger.info(f'Starting picking {stage_nr}')
+
+        indices = pick_unlabeled(comm, stage_nr, whole_dataset, msg)
+    else:
+        indices = None
+
+    indices = comm.bcast(indices)
+    whole_dataset = comm.bcast(whole_dataset)
+
+    if my_rank == 0:
+        logger.info(f'Starting training data generation {stage_nr}')
+
+    for i in msg:
         item = whole_dataset[i]
-        picked, success = learner.pick(item)
+        if indices is not None:
+            item_indices = indices[i]
+        else:
+            item_indices = None
 
-        pick_count += 1
-        if success:
-            pick_success += 1
+        gen.load_or_gen_train_data(item, i, item_indices)
 
-        if nr % 10 == 0:
-            all_pick = comm.reduce(pick_success / pick_count, op=MPI.SUM)
+    logger.info(f"Completed generation cycle {stage_nr}: rank {my_rank} / {rank_count}")
 
-            if all_pick is not None:
-                logger.info(f" {int(nr/len(msg)*100)}% current rate: {all_pick / rank_count}")
+    if not os.path.exists(f'data{stage_nr}/model_weights.pth'):
+        from deepTraining import DeepTrainer
 
-            # logger.info(f" {int(nr/len(msg)*100)}% current rate {pick_success / pick_count}")
+        if my_rank == 0:
+            logger.info(f'Starting model training {stage_nr}')
+            trainer = DeepTrainer(f'data{stage_nr}')
+            trainer.train()
 
-    logger.info(f" MPI Completed Pick: rank {my_rank} / {rank_count} - {pick_success / pick_count}")
+    if my_rank == 0:
+        logger.info(f'Stage completed {stage_nr}')
 
-    all_pick = comm.reduce(pick_success / pick_count, op=MPI.SUM)
 
-    if all_pick is not None:
-        logger.info(f" MPI Completed Pick: {all_pick / rank_count}")
+if __name__ == '__main__':
+    # import numpy as np
+    # import logging
+
+    # logging.basicConfig(format='%(name)s: %(message)s ')
+
+    # logger = logging.getLogger(str(my_rank))
+    # logger.level = logging.INFO
+    # logger.info(f" MPI : rank {my_rank} / {rank_count}")
+
+    for i in range(3):
+        run_stage(i)
+
+    #
+    # gen = Generator('data2')
+    #
+    # msg = comm.scatter(msg_list, root=0)
+    # indices = []
+    # with open(step_indices_file_name, 'r') as f:
+    #     indices = json.loads(f.read())
+    #
+    # for i in msg:
+    #     item = whole_dataset[i]
+    #     item_indices = indices[i]
+    #     gen.load_or_gen_train_data(item, i, item_indices)
+    #
+    # logger.info(f" MPI Completed generatrion2: rank {my_rank} / {rank_count}")
+    #
+    # if not os.path.exists('model_weights2.pth'):
+    #     from deepTraining import DeepTrainer
+    #
+    #     if my_rank == 0:
+    #         trainer = DeepTrainer('data2')
+    #         trainer.train()
+
+    # logger.info(f" MPI Completed Pick: rank {my_rank} / {rank_count} - {pick_success / pick_count}")
+
+    # all_pick = comm.reduce(pick_success / pick_count, op=MPI.SUM)
+
+    # if all_pick is not None:
+    #     logger.info(f" MPI Completed Pick: {all_pick / rank_count}")
 
     #
     # from deepTraining import DeepTrainer

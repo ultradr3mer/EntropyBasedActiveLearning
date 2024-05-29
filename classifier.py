@@ -4,11 +4,12 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn import svm
 import warnings
-from sklearn.neighbors import NearestNeighbors
+from sklearn.neighbors import NearestNeighbors, KNeighborsClassifier
 
-from util import if_then_else
+from util import if_then_else, prob_from_class
 
 warnings.filterwarnings('ignore')
+
 
 class Classifier:
     def __init__(self, l):
@@ -30,7 +31,7 @@ class Classifier:
     def prediction_acc(self, x, y):
         m = len(x)
         pred_y = self.predict_by_point(x)
-        y_probs = [[if_then_else(l == single_y, 1, 0) for l in range(self.l)] for single_y in y]
+        y_probs = prob_from_class(self.l, y)
         error = np.sum(np.abs(pred_y - y_probs)) / m / self.l
         return 1 - error
 
@@ -75,34 +76,44 @@ class SvmClassifier(Classifier):
 
 
 class KnnClassifier(Classifier):
-    def __init__(self, l, n):
+    def __init__(self, l, k):
         super().__init__(l)
-        self.n = n
+        self.k = k
         self.normalizer = None
         self.x = np.empty((0, 2))
         self.y = []
+        self.prob_smooth = []
         self.neighbors = None
 
     def fit(self, x, y):
-        self.neighbors = NearestNeighbors(n_neighbors=self.n, algorithm='ball_tree').fit(x)
-        self.x = x
-        self.y = y
+        self.x = np.array(x, dtype=float)
+        self.y = np.array(y, dtype=float)
+        self.neighbors = NearestNeighbors(n_neighbors=self.k, algorithm='ball_tree').fit(self.x)
+        # self.prob_smooth = np.average(prob_from_class(self.l, self.y[self.neighbors.kneighbors(x, self.k)[1]]), axis=1)
         self.is_fit = True
 
     def predict(self, x):
-        distances, indices = self.neighbors.kneighbors(x, self.n)
+        distances, indices = self.neighbors.kneighbors(x, self.k)
 
-        def interpolation(dist, ind, l):
-            if len(ind) == 1:
-                return max(1 - abs(self.y[ind] - l), 0)
+        def interpolation(dist, probs):
+            count = len(probs)
+            # if count != len(dist):
+            #     raise ValueError('asdasdas')
+            if count == 1:
+                return probs[0]
+
+            # touching_points = np.where(dist == 0)
+            # if len(np.where(dist == 0)[0]) > 0:
+            #     return np.average(probs[touching_points], axis=0)
+
             weights = max(dist) - dist
             if sum(weights) == 0:
-                weights = np.ones(self.n)
-            return np.average(np.array([max(1 - abs(self.y[i] - l), 0) for i in ind]), weights=weights)
+                weights = np.ones(count)
+            # weights = np.log([1 + np.prod([d for i, d in enumerate(dist) if i != dist_i]) for dist_i in range(count)])
+            return np.average(probs, weights=weights, axis=0)
 
-        return np.array([interpolation(dist, ind, l)
-                         for l in range(self.l)
-                         for dist, ind in zip(distances, indices)])
+        return np.array([interpolation(dist, probs)
+                         for dist, probs in zip(distances, prob_from_class(self.l, self.y[indices]))])
 
     def prediction_prob(self, x, y):
         pred_y = self.predict(x)
@@ -130,4 +141,3 @@ class KnnClassifier(Classifier):
 
     def clear(self):
         pass
-

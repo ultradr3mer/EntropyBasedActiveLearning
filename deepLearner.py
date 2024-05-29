@@ -17,11 +17,6 @@ import torch.nn.functional as F
 x_res = 64
 y_res = 64
 
-model_file_name = 'model_weights.pth'
-
-count_success = 0
-count_total = 0
-
 from logger import instance as logger
 from sklearn.cluster import DBSCAN
 
@@ -48,17 +43,14 @@ class DeepLearner:
     def pick(self, item):
         pmgr = PointManager(item)
 
-        k = 4
+        k = 5
         points_with_index = np.concatenate((pmgr.all_x,
                                             np.array(range(len(pmgr.all_x))).reshape((len(pmgr.all_x), 1))),
                                            axis=1)
         bins = pmgr.point_bins(points_with_index)
         pred = self.predict(pmgr, False)
-        i_0 = self.pick_cluster(bins, pred, k, pmgr)
-        pred = self.predict(pmgr, True)
-        i_1 = self.pick_cluster(bins, pred, k, pmgr)
-        pick_i = set(i_0) | set(i_1)
-        all_i = np.array(list(set(pmgr.labeled_i.flatten()) | pick_i), dtype=int)
+        pick_i = self.pick_cluster(bins, pred, k, pmgr)
+        all_i = np.array(list(set(pmgr.labeled_i.flatten()) | set(pick_i)), dtype=int)
 
         initial_acc = pmgr.calc_acc()
 
@@ -67,20 +59,13 @@ class DeepLearner:
         new_acc = pmgr_new.calc_acc()
 
         rnd_points = self.rnd.choices([p for b in bins for p in b],
-                                      k=k * 2)
+                                      k=k)
         i_rnd = np.array(rnd_points, dtype=int)[:, 2]
         rnd_i = np.array(list(set(pmgr.labeled_i.flatten()) | set(i_rnd)), dtype=int)
         pmgr_rnd = PointManager(item, rnd_i)
         rnd_acc = pmgr_rnd.calc_acc()
 
         success = new_acc - initial_acc > rnd_acc - initial_acc
-
-        global count_success
-        global count_total
-        count_total += 1
-        if success:
-            count_success += 1
-
         return all_i, success
 
     def pick_max(self, bins, pred, k):
@@ -94,14 +79,15 @@ class DeepLearner:
         pred_sharp = pred - gaussian_filter(pred, sigma=10)
         # possible_centers_indices = [i for i, b in enumerate(bins)
         #                             if len(b) > 0]
-        possible_centers = np.array([if_then_else(len(b) > 0, 1, 0) for i, b in enumerate(bins)])
-        pred_sharp = normalize(pred_sharp) * np.array(possible_centers).reshape(x_res, x_res)
+        # possible_centers = np.array([[i % x_res, int(i / x_res)] for i in possible_centers_indices])
+        possible_centers_map = np.array([if_then_else(len(b) > 0, 1, 0) for i, b in enumerate(bins)])
+        pred_sharp = normalize(pred_sharp) * np.array(possible_centers_map).reshape(x_res, x_res)
         map = [(x, y)
                for y, row in enumerate(normalize(pred_sharp))
                for x, cell in enumerate(row)
-               if cell > (0.9 - self.rnd.random() / 4)]
-        centeroids = pmgr.means_set(map, k)  # possible_centers)
-        return np.array([self.rnd.choice(bins[map[c][0]+map[c][1]*x_res])[2] for c in centeroids], dtype=int)
+               if cell > (0.9 - self.rnd.random() / 2)]
+        centeroids = pmgr.means_set(map, k) #, possible_centers)
+        return np.array([self.rnd.choice(bins[map[c][0] + map[c][1] * x_res])[2] for c in centeroids], dtype=int)
 
     def predict(self, pmgr, flip):
         prior = pmgr.calc_prior().reshape(64, 64)

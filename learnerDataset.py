@@ -6,8 +6,10 @@ import plotFunctions
 
 class LearnerDataset(Dataset):
     def __init__(self, data):
-        x = np.array([np.concatenate((d[0], [d[2] - 0.5]), 0) for d in data])
-        y = np.array([[d[1]] for d in data])
+        x = np.array([np.concatenate((d[0], [d[2] - 0.5]), 0) for d in data] +
+                     [np.concatenate(([d[0][0], d[0][2], d[0][1]], [0.5 - d[2]]), 0) for d in data])
+        y = np.array([[d[1]] for d in data] +
+                     [[d[1]] for d in data])
 
         self.x = torch.tensor(x, dtype=torch.float)
         self.y = torch.tensor(y, dtype=torch.float)
