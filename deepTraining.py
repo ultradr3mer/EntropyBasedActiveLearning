@@ -1,3 +1,4 @@
+import os.path
 import random
 
 import numpy as np
@@ -13,10 +14,11 @@ import plotFunctions
 from util import normalize
 from logger import instance as logger
 
+
 class DeepTrainer(object):
     def __init__(self, folder):
         self.folder = folder
-        self.gen = Generator(folder)
+        self.gen = Generator(os.path.join(self.folder, 'training'))
         self.data_set = self.gen.load_or_create_dataset()
         self.counter = 0
         self.random = random.Random('sidjhf')
@@ -73,7 +75,7 @@ class DeepTrainer(object):
         optimizer = torch.optim.SGD(model.parameters(), lr=1e-2)
 
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.2)
-        epochs = 100
+        epochs = 20
         for t in range(epochs):
             logger.info(f"Epoch {t + 1}\n-------------------------------")
             scheduler.step(t)
@@ -81,13 +83,11 @@ class DeepTrainer(object):
             self.test(test_dataloader, model, loss_fn)
         logger.info("Done!")
 
-        torch.save(model.state_dict(), f"{self.folder}/model_weights.pth")
-
         def create_image(d):
             r = normalize(d[0])
             g = normalize(d[1])
             b = normalize(d[2])
-            return np.dstack((r,g,b))
+            return np.dstack((r, g, b))
 
         i_pred = 0
         i_actual = 0
@@ -106,8 +106,10 @@ class DeepTrainer(object):
                     self.gen.save_as_image(create_image(item.cpu().numpy()), f'result/{i_x}_x.png')
                     i_x += 1
 
+        return model.state_dict()
+
     def setup_dataloader(self, data):
-        data_full = list([self.gen.load_or_gen_train_data(item, i) for i, item in data])
+        data_full = list([self.gen.load_training_data(i) for i, item in data])
         my_dataset = LearnerDataset(data_full)
         return DataLoader(my_dataset, batch_size=32, shuffle=True)
 

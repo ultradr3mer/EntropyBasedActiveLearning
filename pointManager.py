@@ -13,7 +13,7 @@ res = 64
 
 class PointManager:
     def __init__(self, item=None, labeled_i=None):
-        self.clf = KnnClassifier(1, 4)
+        self.clf = KnnClassifier(1, 4, linear=False)
         self.rnd = Random('dfg43')
         if item is None:
             return
@@ -24,7 +24,7 @@ class PointManager:
         self.classes = np.array(range(2))
 
         if labeled_i is not None:
-            self.labeled_i = labeled_i
+            self.labeled_i = np.array(labeled_i)
         else:
             self.labeled_i = self.means_set(self.all_x, random.randint(5, 20))
 

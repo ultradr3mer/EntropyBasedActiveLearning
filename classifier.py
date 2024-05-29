@@ -3,6 +3,7 @@ import copy
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn import svm
+from scipy import stats
 import warnings
 from sklearn.neighbors import NearestNeighbors, KNeighborsClassifier
 
@@ -76,7 +77,7 @@ class SvmClassifier(Classifier):
 
 
 class KnnClassifier(Classifier):
-    def __init__(self, l, k):
+    def __init__(self, l, k, linear=True):
         super().__init__(l)
         self.k = k
         self.normalizer = None
@@ -84,32 +85,34 @@ class KnnClassifier(Classifier):
         self.y = []
         self.prob_smooth = []
         self.neighbors = None
+        self.linear = linear
 
     def fit(self, x, y):
         self.x = np.array(x, dtype=float)
         self.y = np.array(y, dtype=float)
-        self.neighbors = NearestNeighbors(n_neighbors=self.k, algorithm='ball_tree').fit(self.x)
+        self.neighbors = NearestNeighbors(n_neighbors=max(self.k,1), algorithm='ball_tree').fit(self.x)
         # self.prob_smooth = np.average(prob_from_class(self.l, self.y[self.neighbors.kneighbors(x, self.k)[1]]), axis=1)
         self.is_fit = True
 
     def predict(self, x):
-        distances, indices = self.neighbors.kneighbors(x, self.k)
+        distances, indices = self.neighbors.kneighbors(x, max(self.k, 1))
+        if self.k == 0:
+            return prob_from_class(self.l, self.y[indices])
 
         def interpolation(dist, probs):
             count = len(probs)
-            # if count != len(dist):
-            #     raise ValueError('asdasdas')
+
             if count == 1:
                 return probs[0]
 
-            # touching_points = np.where(dist == 0)
-            # if len(np.where(dist == 0)[0]) > 0:
-            #     return np.average(probs[touching_points], axis=0)
+            if self.linear:
+                weights = max(dist) - dist
+            else:
+                weights = stats.norm.pdf(dist, scale=np.average(dist)/2)
 
-            weights = max(dist) - dist
             if sum(weights) == 0:
                 weights = np.ones(count)
-            # weights = np.log([1 + np.prod([d for i, d in enumerate(dist) if i != dist_i]) for dist_i in range(count)])
+
             return np.average(probs, weights=weights, axis=0)
 
         return np.array([interpolation(dist, probs)

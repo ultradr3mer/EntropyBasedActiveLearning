@@ -2,9 +2,11 @@ import json
 import math
 import os.path
 import random
+from typing import io
 
 import cv2
 import numpy as np
+import torch
 from scipy.ndimage import gaussian_filter
 from sklearn.cluster import KMeans
 from sklearn.datasets import make_blobs
@@ -68,20 +70,23 @@ class Generator:
             pass
 
     def load_or_create_dataset(self):
-        try:
-            with open(dataset_filename, 'r') as f:
-                json_string = f.read()
-                return json.loads(json_string)
-        except FileNotFoundError:
-            gen = Generator()
-            data_set = []
-            for i in range(2000):
-                x, y = gen.generate()
-                data_set.append([list(x), y])
-            json_string = json.dumps(data_set)
-            with open(dataset_filename, 'w') as f:
-                f.write(json_string)
-            return data_set
+        def load():
+            try:
+                with open(dataset_filename, 'r') as f:
+                    json_string = f.read()
+                    return json.loads(json_string)
+            except FileNotFoundError:
+                data_set = []
+                for i in range(2000):
+                    x, y = self.generate()
+                    data_set.append([list(x), y])
+                json_string = json.dumps(data_set)
+                with open(dataset_filename, 'w') as f:
+                    f.write(json_string)
+                return data_set
+
+        return load()[:1000]
+
 
     def gen_training_histogram(self, item, labeled_i):
         pmgr = PointManager(item, labeled_i)
@@ -98,10 +103,10 @@ class Generator:
                  for b in pmgr.point_bins(points_with_class)]
         probs = [if_then_else(sum(p) == 0, [1, 1], p) for p in probs]
         map_points = np.array([i for i in discovery_points if discovery_map[i] > 0.0])
-        map_acc = np.array([np.average(pmgr.acc_for_point(pmgr.point_coords[i]), weights=probs[i]) for i in map_points])
+        map_acc = np.array([np.average(pmgr.acc_for_point(pmgr.point_coords[i]), weights=[1, 0]) for i in map_points])
         # remaining_points = [i for i in discovery_points if discovery_map[i] == 0.0]
 
-        discovery_hotmap = KnnClassifier(1, 4)
+        discovery_hotmap = KnnClassifier(1, 3)
         discovery_hotmap.fit([pmgr.point_coords[i] for i in map_points],
                              [1.0 - c for c in map_acc])
         y_points = pmgr.gen_point_coords(y_res)
@@ -117,27 +122,46 @@ class Generator:
         cv2.imwrite(filename, image)
         pass
 
+    def get_trainig_file_names(self, number):
+        return {"x": f'{self.folder}/{number}_x.png',
+                "y": f'{self.folder}/{number}_y.png',
+                "p": f'{self.folder}/{number}_p.png'}
+
     def load_from_image(self, filename):
         img = cv2.imread(filename, -1)
         if img is None:
             raise FileNotFoundError(f"Image with {filename} could not be loaded.")
         return np.array(cv2.split(img), dtype=float) / uint16_max
 
-    def load_or_gen_train_data(self, dataset, number, labeled_i=None):
-        x_filename = f'{self.folder}/{number}_x.png'
-        y_filename = f'{self.folder}/{number}_y.png'
-        p_filename = f'{self.folder}/{number}_p.png'
+    def gen_train_data(self, dataset, number, labeled_i=None):
         try:
-            x = self.load_from_image(x_filename)[:3]
-            y = self.load_from_image(y_filename)[0]
-            p = self.load_from_image(p_filename)[0]
-            return x, y, p
-        except FileNotFoundError:
-            x, y, p = self.gen_training_histogram(dataset, labeled_i)
-            self.save_as_image(x, x_filename)
-            self.save_as_image(y, y_filename)
-            self.save_as_image(p, p_filename)
-            return np.array(cv2.split(x)), np.array(cv2.split(y)), np.array(cv2.split(p)[1:3])
+            os.mkdir(self.folder)
+        except FileExistsError:
+            pass
+
+        file_names = self.get_trainig_file_names(number)
+        if (os.path.isfile(file_names['x']) and
+                os.path.isfile(file_names['y']) and
+                os.path.isfile(file_names['p'])):
+            return
+
+        x, y, p = self.gen_training_histogram(dataset, labeled_i)
+        self.save_as_image(x, file_names['x'])
+        self.save_as_image(y, file_names['y'])
+        self.save_as_image(p, file_names['p'])
+        return
+
+    def load_training_data(self, number):
+        file_names = self.get_trainig_file_names(number)
+        x = self.load_from_image(file_names['x'])[:3]
+        y = self.load_from_image(file_names['y'])[0]
+        p = self.load_from_image(file_names['p'])[0]
+        return x, y, p
+
+
+def load_labeled_i(stage_nr):
+    with open(f'data{stage_nr}/labeled_indices.json', 'r') as f:
+        return json.loads(f.read())
 
 
 def pick_unlabeled(comm, stage_nr, whole_dataset, msg):
@@ -151,10 +175,21 @@ def pick_unlabeled(comm, stage_nr, whole_dataset, msg):
     step_indices_file_name = f"data{stage_nr}/labeled_indices.json"
     # combined_picks = None
     if not os.path.exists(step_indices_file_name):
+        if stage_nr >= 2:
+            last_indices = load_labeled_i(stage_nr - 1)
+        else:
+            last_indices = None
+
         worker_picks = []
         for nr, i in enumerate(msg):
             item = whole_dataset[i]
-            picked, success = learner.pick(item)
+
+            if last_indices is not None:
+                item_indices = last_indices[i]
+            else:
+                item_indices = None
+
+            picked, success = learner.pick(item, item_indices)
             worker_picks.append(picked)
 
             pick_count += 1
@@ -184,9 +219,7 @@ def pick_unlabeled(comm, stage_nr, whole_dataset, msg):
             return None
 
     elif comm.rank == 0:
-        with open(f'data{stage_nr}/labeled_indices.json', 'r') as f:
-            data = json.loads(f.read())
-            return data
+        return load_labeled_i(stage_nr)
 
     return None
 
@@ -204,7 +237,7 @@ def run_stage(stage_nr):
 
     stage_dir = f'data{stage_nr}'
 
-    gen = Generator(stage_dir)
+    gen = Generator(os.path.join(stage_dir, 'training'))
 
     if my_rank == 0:
         logger.info(f'Starting stage {stage_nr}')
@@ -240,14 +273,21 @@ def run_stage(stage_nr):
     if my_rank == 0:
         logger.info(f'Starting training data generation {stage_nr}')
 
-    for i in msg:
+    total_processed = 0
+    for nr, i in enumerate(msg):
         item = whole_dataset[i]
         if indices is not None:
             item_indices = indices[i]
         else:
             item_indices = None
 
-        gen.load_or_gen_train_data(item, i, item_indices)
+        gen.gen_train_data(item, i, item_indices)
+
+        if nr % 5 == 0:
+            processed = comm.reduce(10, op=MPI.SUM)
+            if processed is not None:
+                total_processed += processed
+                logger.info(f" progress  {int(total_processed / len(whole_dataset) * 100)}%")
 
     logger.info(f"Completed generation cycle {stage_nr}: rank {my_rank} / {rank_count}")
 
@@ -257,56 +297,14 @@ def run_stage(stage_nr):
         if my_rank == 0:
             logger.info(f'Starting model training {stage_nr}')
             trainer = DeepTrainer(f'data{stage_nr}')
-            trainer.train()
+            state = trainer.train()
+            torch.save(state, f"{stage_dir}/model_weights.pth")
 
-    if my_rank == 0:
-        logger.info(f'Stage completed {stage_nr}')
+        if my_rank == 0:
+            logger.info(f'Stage completed {stage_nr}')
 
 
 if __name__ == '__main__':
-    # import numpy as np
-    # import logging
-
-    # logging.basicConfig(format='%(name)s: %(message)s ')
-
-    # logger = logging.getLogger(str(my_rank))
-    # logger.level = logging.INFO
-    # logger.info(f" MPI : rank {my_rank} / {rank_count}")
-
-    for i in range(3):
+    for i in range(10):
         run_stage(i)
 
-    #
-    # gen = Generator('data2')
-    #
-    # msg = comm.scatter(msg_list, root=0)
-    # indices = []
-    # with open(step_indices_file_name, 'r') as f:
-    #     indices = json.loads(f.read())
-    #
-    # for i in msg:
-    #     item = whole_dataset[i]
-    #     item_indices = indices[i]
-    #     gen.load_or_gen_train_data(item, i, item_indices)
-    #
-    # logger.info(f" MPI Completed generatrion2: rank {my_rank} / {rank_count}")
-    #
-    # if not os.path.exists('model_weights2.pth'):
-    #     from deepTraining import DeepTrainer
-    #
-    #     if my_rank == 0:
-    #         trainer = DeepTrainer('data2')
-    #         trainer.train()
-
-    # logger.info(f" MPI Completed Pick: rank {my_rank} / {rank_count} - {pick_success / pick_count}")
-
-    # all_pick = comm.reduce(pick_success / pick_count, op=MPI.SUM)
-
-    # if all_pick is not None:
-    #     logger.info(f" MPI Completed Pick: {all_pick / rank_count}")
-
-    #
-    # from deepTraining import DeepTrainer
-    #
-    # t = DeepTrainer()
-    # t.train()

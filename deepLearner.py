@@ -7,6 +7,7 @@ from scipy.ndimage import gaussian_filter
 from torch import nn
 from torch.utils.data import Dataset
 from torchvision import transforms
+from torchvision.transforms import v2, InterpolationMode
 
 import plotFunctions
 from classifier import KnnClassifier
@@ -35,13 +36,13 @@ class DeepLearner:
         model = NnConv().to(device)
         if model_file_name is not None:
             model.load_state_dict(torch.load(model_file_name))
-        logger.info(model)
+        logger.debug(model)
         self.model = model
         self.device = device
         self.rnd = Random('sdikjgfh')
 
-    def pick(self, item):
-        pmgr = PointManager(item)
+    def pick(self, item, labeled_i):
+        pmgr = PointManager(item, labeled_i)
 
         k = 5
         points_with_index = np.concatenate((pmgr.all_x,
@@ -50,7 +51,7 @@ class DeepLearner:
         bins = pmgr.point_bins(points_with_index)
         pred = self.predict(pmgr, False)
         pick_i = self.pick_cluster(bins, pred, k, pmgr)
-        all_i = np.array(list(set(pmgr.labeled_i.flatten()) | set(pick_i)), dtype=int)
+        all_i = np.unique(np.hstack((pmgr.labeled_i, pick_i)))
 
         initial_acc = pmgr.calc_acc()
 
@@ -66,6 +67,7 @@ class DeepLearner:
         rnd_acc = pmgr_rnd.calc_acc()
 
         success = new_acc - initial_acc > rnd_acc - initial_acc
+        all_i = np.unique(np.hstack((all_i, rnd_i)))
         return all_i, success
 
     def pick_max(self, bins, pred, k):
@@ -77,16 +79,14 @@ class DeepLearner:
     def pick_cluster(self, bins, pred, k, pmgr):
         pred = pred.reshape(x_res, x_res)
         pred_sharp = pred - gaussian_filter(pred, sigma=10)
-        # possible_centers_indices = [i for i, b in enumerate(bins)
-        #                             if len(b) > 0]
-        # possible_centers = np.array([[i % x_res, int(i / x_res)] for i in possible_centers_indices])
         possible_centers_map = np.array([if_then_else(len(b) > 0, 1, 0) for i, b in enumerate(bins)])
-        pred_sharp = normalize(pred_sharp) * np.array(possible_centers_map).reshape(x_res, x_res)
+        pred_sharp = normalize(normalize(pred_sharp) * np.array(possible_centers_map).reshape(x_res, x_res))
+
         map = [(x, y)
-               for y, row in enumerate(normalize(pred_sharp))
+               for y, row in enumerate(pred_sharp)
                for x, cell in enumerate(row)
                if cell > (0.9 - self.rnd.random() / 2)]
-        centeroids = pmgr.means_set(map, k) #, possible_centers)
+        centeroids = pmgr.means_set(map, k)
         return np.array([self.rnd.choice(bins[map[c][0] + map[c][1] * x_res])[2] for c in centeroids], dtype=int)
 
     def predict(self, pmgr, flip):
@@ -107,56 +107,22 @@ class DeepLearner:
         return pred.detach().cpu().numpy()
 
 
-class NnFully(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.flatten = nn.Flatten(1)
-        inner_res = x_res ** 2
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(x_res ** 2 * 3, inner_res),
-            nn.ReLU(),
-            nn.Linear(inner_res, inner_res),
-            nn.ReLU(),
-            nn.Linear(inner_res, y_res ** 2),
-            nn.Unflatten(1, torch.Size([1, y_res, y_res]))
-        )
-
-    def forward(self, x):
-        x = self.flatten(x)
-        x = self.linear_relu_stack(x)
-        return x
-
-
 class NnConv(nn.Module):
     def __init__(self):
         super().__init__()
-        kernel_size = 13
+        kernel_size = 11
         padding = int(kernel_size / 2)
         self.conv_stack = nn.Sequential(
             nn.Conv2d(4, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
             nn.ReLU(),
+            nn.Conv2d(12, 12, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
+            nn.BatchNorm2d(12),
+            nn.ReLU(),
             nn.Conv2d(12, 6, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
             nn.ReLU(),
-            nn.Conv2d(6, 6, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
-            nn.ReLU(),
-            nn.Conv2d(6, 1, kernel_size=kernel_size, padding=padding, padding_mode='replicate')
+            nn.Conv2d(6, 1, kernel_size=kernel_size, padding=padding, padding_mode='replicate'),
         )
 
     def forward(self, x):
         x = self.conv_stack(x)
         return x
-
-
-if __name__ == '__main__':
-    from generator import Generator
-    from pointManager import PointManager
-
-    # from deepTraining import DeepTrainer
-    # t = DeepTrainer()
-    # t.train()
-    learner = DeepLearner(model_file_name)
-    gen = Generator('data')
-    dataset = gen.load_or_create_dataset()
-
-    for item in dataset:
-        learner.pick(item)
