@@ -11,7 +11,7 @@ from sklearn.datasets import make_blobs
 from sklearn.ensemble import RandomForestClassifier
 
 from classifier import KnnClassifier
-from deepLearner import x_res, y_res, DeepLearner, model_file_name
+from deepLearner import x_res, y_res, DeepLearner
 import plotFunctions
 from pointManager import PointManager
 from util import normalize, if_then_else

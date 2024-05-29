@@ -242,3 +242,5 @@ fabric.properties
 /result
 /data3b
 /model_weights.pth
+/data0
+/data1
